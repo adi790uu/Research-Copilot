@@ -15,8 +15,16 @@ class Settings(BaseSettings):
     openai_model: str = Field(default="gpt-4o-mini")
     tavily_api_key: str = Field(default="")
 
-    database_url: str = Field(default="sqlite+aiosqlite:///./data/app.db")
-    checkpoint_db_url: str = Field(default="sqlite:///./data/checkpoints.db")
+    # Auth (Clerk). Without these set, every protected endpoint returns 401.
+    clerk_secret_key: str = Field(default="")
+    clerk_publishable_key: str = Field(default="")
+
+    # Canonical Postgres URL in psycopg form (postgresql://...).
+    # The LangGraph checkpointer consumes this URL directly.
+    # SQLAlchemy uses `sqlalchemy_url` (asyncpg driver) below.
+    database_url: str = Field(
+        default="postgresql://researchcopilot:researchcopilot@localhost:5432/research_copilot"
+    )
 
     log_level: str = Field(default="INFO")
     cors_origins: str = Field(default="http://localhost:5173")
@@ -27,6 +35,17 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @property
+    def sqlalchemy_url(self) -> str:
+        """SQLAlchemy + asyncpg dialect form derived from `database_url`."""
+        if self.database_url.startswith("postgresql+asyncpg://"):
+            return self.database_url
+        if self.database_url.startswith("postgresql://"):
+            return self.database_url.replace(
+                "postgresql://", "postgresql+asyncpg://", 1
+            )
+        return self.database_url
 
 
 @lru_cache

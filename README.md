@@ -7,14 +7,25 @@ AI Research Copilot that prepares sales/business meeting briefings using a LangG
 ## Stack
 
 - **Frontend** — React + TypeScript + Vite + Tailwind + TanStack Query
-- **Backend** — Python 3.11 + FastAPI + SQLAlchemy + structlog
+- **Backend** — Python 3.11 + FastAPI + SQLAlchemy 2.0 (async) + structlog
 - **AI Workflow** — LangGraph (OpenAI for synthesis, Tavily for search)
-- **Persistence** — SQLite for dev (Postgres-swap-ready), LangGraph `SqliteSaver` for checkpoints
+- **Persistence** — Postgres for app tables and the LangGraph `AsyncPostgresSaver` checkpointer (single database)
 - **Streaming** — Server-Sent Events from `/sessions/{id}/stream`
 
 ## Quickstart
 
+The simplest path is Docker Compose — it brings up Postgres, the backend, and the frontend together:
+
 ```bash
+docker compose up
+```
+
+Or run each piece locally (Postgres still needs to be reachable; the compose file's `postgres` service exposes 5432 if you only want the database from compose):
+
+```bash
+# Postgres only via compose
+docker compose up postgres -d
+
 # Backend
 cd backend
 uv sync
@@ -25,12 +36,6 @@ uv run uvicorn app.main:app --reload
 cd frontend
 npm install
 npm run dev
-```
-
-Or run both via Docker:
-
-```bash
-docker compose up
 ```
 
 - Backend: http://localhost:8000 (docs at `/docs`)

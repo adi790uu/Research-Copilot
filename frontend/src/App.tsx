@@ -1,36 +1,42 @@
-import { Link, Route, Routes } from "react-router-dom";
+import { Route, Routes } from "react-router-dom";
+import { RedirectToSignIn, SignedIn, SignedOut } from "@clerk/clerk-react";
 
-import Home from "./routes/Home";
+import { DashboardLayout } from "./components/dashboard/DashboardLayout";
+import Dashboard from "./routes/Dashboard";
+import Landing from "./routes/Landing";
+import SessionDetail from "./routes/SessionDetail";
+import SignInPage from "./routes/SignInPage";
+import SignUpPage from "./routes/SignUpPage";
 
 export default function App() {
   return (
-    <div className="min-h-screen flex flex-col">
-      <header className="border-b border-ink-800/80">
-        <div className="mx-auto max-w-5xl px-6 py-4 flex items-center justify-between">
-          <Link
-            to="/"
-            className="font-medium tracking-tight text-ink-100 hover:text-white transition"
-          >
-            Research Copilot
-          </Link>
-          <span className="text-xs uppercase tracking-widest text-ink-500">
-            Phase 0
-          </span>
-        </div>
-      </header>
+    <Routes>
+      {/* Public marketing surface */}
+      <Route path="/" element={<Landing />} />
 
-      <main className="flex-1">
-        <Routes>
-          <Route path="/" element={<Home />} />
-        </Routes>
-      </main>
+      {/* Auth — catch-all so Clerk can handle nested routes (sso callback, verify, etc.) */}
+      <Route path="/sign-in/*" element={<SignInPage />} />
+      <Route path="/sign-up/*" element={<SignUpPage />} />
 
-      <footer className="border-t border-ink-800/80 text-xs text-ink-500">
-        <div className="mx-auto max-w-5xl px-6 py-4 flex justify-between">
-          <span>research-copilot</span>
-          <span>v0.1.0</span>
-        </div>
-      </footer>
-    </div>
+      {/* Dashboard — gated */}
+      <Route
+        path="/app/*"
+        element={
+          <>
+            <SignedIn>
+              <DashboardLayout>
+                <Routes>
+                  <Route index element={<Dashboard />} />
+                  <Route path="sessions/:id" element={<SessionDetail />} />
+                </Routes>
+              </DashboardLayout>
+            </SignedIn>
+            <SignedOut>
+              <RedirectToSignIn />
+            </SignedOut>
+          </>
+        }
+      />
+    </Routes>
   );
 }
