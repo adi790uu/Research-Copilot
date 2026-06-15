@@ -1,7 +1,17 @@
 import { useAuth } from "@clerk/clerk-react";
 import { useMemo } from "react";
 
-import type { Session, SessionCreate } from "./types";
+import type {
+  ActivitySummary,
+  Chat,
+  ChatCreate,
+  ChatWithMessages,
+  Message,
+  MessageCreate,
+  Session,
+  SessionCreate,
+  User,
+} from "./types";
 
 const BASE_URL =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "/api";
@@ -67,16 +77,30 @@ function buildFetcher(getToken: (() => Promise<string | null>) | null): Fetcher 
 
 interface ApiClient {
   health: () => Promise<Health>;
+  me: {
+    get: () => Promise<User>;
+    activity: () => Promise<ActivitySummary>;
+  };
   sessions: {
     create: (payload: SessionCreate) => Promise<Session>;
     list: () => Promise<Session[]>;
     get: (id: string) => Promise<Session>;
+  };
+  chats: {
+    create: (payload: ChatCreate) => Promise<Chat>;
+    list: () => Promise<Chat[]>;
+    get: (id: string) => Promise<ChatWithMessages>;
+    addMessage: (id: string, payload: MessageCreate) => Promise<Message>;
   };
 }
 
 function buildClient(fetcher: Fetcher): ApiClient {
   return {
     health: () => fetcher<Health>("/health"),
+    me: {
+      get: () => fetcher<User>("/me"),
+      activity: () => fetcher<ActivitySummary>("/me/activity"),
+    },
     sessions: {
       create: (payload) =>
         fetcher<Session>("/sessions", {
@@ -85,6 +109,20 @@ function buildClient(fetcher: Fetcher): ApiClient {
         }),
       list: () => fetcher<Session[]>("/sessions"),
       get: (id) => fetcher<Session>(`/sessions/${id}`),
+    },
+    chats: {
+      create: (payload) =>
+        fetcher<Chat>("/chats", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        }),
+      list: () => fetcher<Chat[]>("/chats"),
+      get: (id) => fetcher<ChatWithMessages>(`/chats/${id}`),
+      addMessage: (id, payload) =>
+        fetcher<Message>(`/chats/${id}/messages`, {
+          method: "POST",
+          body: JSON.stringify(payload),
+        }),
     },
   };
 }

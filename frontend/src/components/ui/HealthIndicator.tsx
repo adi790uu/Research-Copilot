@@ -1,11 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 
-import { api } from "../../lib/api";
+import { publicApi } from "../../lib/api";
 
 export function HealthIndicator() {
   const health = useQuery({
     queryKey: ["health"],
-    queryFn: api.health,
+    queryFn: publicApi.health,
     refetchInterval: 15_000,
   });
 

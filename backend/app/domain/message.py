@@ -17,7 +17,7 @@ class Message(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    session_id: str
+    chat_id: str
     role: MessageRole
     content: str
     created_at: datetime

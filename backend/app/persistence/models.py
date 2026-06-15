@@ -17,12 +17,44 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+class UserORM(Base):
+    __tablename__ = "users"
+
+    # Clerk user id (e.g. `user_2abc...`). Clerk remains the auth source of truth.
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow, onupdate=_utcnow
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+
+    sessions: Mapped[list["SessionORM"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+    chats: Mapped[list["ChatORM"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+
+
 class SessionORM(Base):
     __tablename__ = "sessions"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
-    # Clerk user id (e.g. `user_2abc...`). Not a FK — Clerk owns the user table.
-    user_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     company_name: Mapped[str] = mapped_column(String(200), nullable=False)
     website: Mapped[str] = mapped_column(String(2048), nullable=False)
     objective: Mapped[str] = mapped_column(Text, nullable=False)
@@ -34,16 +66,17 @@ class SessionORM(Base):
         DateTime(timezone=True), nullable=False, default=_utcnow, onupdate=_utcnow
     )
 
+    user: Mapped[UserORM] = relationship(back_populates="sessions")
     report: Mapped["ReportORM | None"] = relationship(
         back_populates="session",
         uselist=False,
         cascade="all, delete-orphan",
         lazy="selectin",
     )
-    messages: Mapped[list["MessageORM"]] = relationship(
+    chats: Mapped[list["ChatORM"]] = relationship(
         back_populates="session",
         cascade="all, delete-orphan",
-        order_by="MessageORM.created_at",
+        order_by="ChatORM.updated_at.desc()",
         lazy="selectin",
     )
 
@@ -66,14 +99,49 @@ class ReportORM(Base):
     session: Mapped[SessionORM] = relationship(back_populates="report")
 
 
+class ChatORM(Base):
+    __tablename__ = "chats"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    session_id: Mapped[str | None] = mapped_column(
+        String(32),
+        ForeignKey("sessions.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    title: Mapped[str] = mapped_column(String(200), nullable=False, default="Untitled chat")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow, onupdate=_utcnow
+    )
+
+    user: Mapped[UserORM] = relationship(back_populates="chats")
+    session: Mapped[SessionORM | None] = relationship(back_populates="chats")
+    messages: Mapped[list["MessageORM"]] = relationship(
+        back_populates="chat",
+        cascade="all, delete-orphan",
+        order_by="MessageORM.created_at",
+        lazy="selectin",
+    )
+
+
 class MessageORM(Base):
     __tablename__ = "messages"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
-    session_id: Mapped[str] = mapped_column(
+    chat_id: Mapped[str] = mapped_column(
         String(32),
-        ForeignKey("sessions.id", ondelete="CASCADE"),
+        ForeignKey("chats.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
     role: Mapped[str] = mapped_column(String(20), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
@@ -81,4 +149,4 @@ class MessageORM(Base):
         DateTime(timezone=True), nullable=False, default=_utcnow
     )
 
-    session: Mapped[SessionORM] = relationship(back_populates="messages")
+    chat: Mapped[ChatORM] = relationship(back_populates="messages")

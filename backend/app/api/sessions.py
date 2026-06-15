@@ -15,7 +15,7 @@ async def create_session(
     db: AsyncSession = Depends(get_db_session),
     user: CurrentUser = Depends(get_current_user),
 ) -> Session:
-    return await SessionService(db, user.id).create(payload)
+    return await SessionService(db, user).create(payload)
 
 
 @router.get("", response_model=list[Session])
@@ -24,7 +24,7 @@ async def list_sessions(
     db: AsyncSession = Depends(get_db_session),
     user: CurrentUser = Depends(get_current_user),
 ) -> list[Session]:
-    return await SessionService(db, user.id).list(limit=limit)
+    return await SessionService(db, user).list(limit=limit)
 
 
 @router.get("/{session_id}", response_model=Session)
@@ -33,4 +33,4 @@ async def get_session(
     db: AsyncSession = Depends(get_db_session),
     user: CurrentUser = Depends(get_current_user),
 ) -> Session:
-    return await SessionService(db, user.id).get(session_id)
+    return await SessionService(db, user).get(session_id)
