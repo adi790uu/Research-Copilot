@@ -1,4 +1,5 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { ApiError, useApi } from "../lib/api";
@@ -6,15 +7,55 @@ import { formatLongDate, formatTime, shortId } from "../lib/format";
 import type { Session } from "../lib/types";
 import { Status, statusTone } from "../components/ui/Pill";
 import { SectionHeading } from "../components/ui/SectionHeading";
+import { ReportView } from "../components/session/ReportView";
+import { WorkflowProgress } from "../components/session/WorkflowProgress";
+import { useWorkflowStream } from "../hooks/useWorkflowStream";
 
 export default function SessionDetail() {
   const { id = "" } = useParams<{ id: string }>();
   const api = useApi();
+  const queryClient = useQueryClient();
 
   const session = useQuery({
     queryKey: ["session", id],
     queryFn: () => api.sessions.get(id),
     enabled: id.length > 0,
+  });
+
+  // Stream as long as the session exists. The hook is cheap when idle and
+  // automatically replays history on reconnect.
+  const [streamEnabled, setStreamEnabled] = useState(false);
+  useEffect(() => {
+    if (!session.data) return;
+    if (session.data.status === "running" || session.data.status === "completed") {
+      setStreamEnabled(true);
+    }
+  }, [session.data]);
+
+  const stream = useWorkflowStream(id, streamEnabled);
+
+  const startRun = useMutation({
+    mutationFn: () => api.sessions.run(id),
+    onSuccess: () => {
+      setStreamEnabled(true);
+      queryClient.invalidateQueries({ queryKey: ["session", id] });
+    },
+  });
+
+  // Refetch session + load report once the stream terminates.
+  useEffect(() => {
+    if (stream.phase === "completed" || stream.phase === "failed") {
+      queryClient.invalidateQueries({ queryKey: ["session", id] });
+    }
+  }, [stream.phase, queryClient, id]);
+
+  const reportEnabled =
+    (session.data?.status === "completed") || stream.phase === "completed";
+
+  const report = useQuery({
+    queryKey: ["session-report", id],
+    queryFn: () => api.sessions.report(id),
+    enabled: reportEnabled && id.length > 0,
   });
 
   return (
@@ -35,14 +76,30 @@ export default function SessionDetail() {
       <section className="mt-20">
         <SectionHeading number="01" label="Workflow" meta="LangGraph" />
         <div className="mt-6">
-          <WorkflowPlaceholder />
+          <WorkflowProgress
+            stream={stream}
+            onStart={() => startRun.mutate()}
+            starting={startRun.isPending}
+            startDisabled={!session.data}
+          />
+          {startRun.isError && (
+            <p className="mt-3 text-xs text-bad font-mono uppercase tracking-wider">
+              {(startRun.error as ApiError | Error).message}
+            </p>
+          )}
         </div>
       </section>
 
       <section className="mt-16">
         <SectionHeading number="02" label="Briefing" meta="Nine sections" />
         <div className="mt-6">
-          <BriefingPlaceholder />
+          {report.data ? (
+            <ReportView report={report.data} />
+          ) : report.isLoading ? (
+            <SkeletonBlock />
+          ) : (
+            <BriefingPlaceholder />
+          )}
         </div>
       </section>
 
@@ -128,6 +185,17 @@ function SkeletonHeader() {
   );
 }
 
+function SkeletonBlock() {
+  return (
+    <div className="space-y-3 animate-pulse" aria-busy>
+      <div className="h-4 w-1/3 bg-ink/10 rounded-sm" />
+      <div className="h-3 w-full bg-ink/5 rounded-sm" />
+      <div className="h-3 w-5/6 bg-ink/5 rounded-sm" />
+      <div className="h-3 w-3/4 bg-ink/5 rounded-sm" />
+    </div>
+  );
+}
+
 function ErrorCard({ error }: { error: unknown }) {
   const message = error instanceof ApiError ? error.message : "Failed to load";
   return (
@@ -144,12 +212,10 @@ function Placeholder({
   eyebrow,
   title,
   body,
-  steps,
 }: {
   eyebrow: string;
   title: string;
   body: string;
-  steps?: string[];
 }) {
   return (
     <div className="relative overflow-hidden border border-rule/8 bg-bg-elev/40 px-7 py-8 rounded-sm">
@@ -172,31 +238,8 @@ function Placeholder({
         <p className="mt-3 text-sm text-ink-soft leading-relaxed max-w-prose">
           {body}
         </p>
-        {steps && (
-          <ol className="mt-5 grid gap-2 text-sm font-mono text-ink-faint">
-            {steps.map((s, i) => (
-              <li key={i} className="flex items-baseline gap-3">
-                <span className="text-ink-faint/60 tabular-nums">
-                  {String(i + 1).padStart(2, "0")}
-                </span>
-                <span>{s}</span>
-              </li>
-            ))}
-          </ol>
-        )}
       </div>
     </div>
-  );
-}
-
-function WorkflowPlaceholder() {
-  return (
-    <Placeholder
-      eyebrow="Awaiting orchestration"
-      title="The workflow will materialise here."
-      body="A live timeline of LangGraph nodes — planner, researcher, extractor, synthesizer, quality gate — streams its progress here once the brief is dispatched."
-      steps={["Planner", "Researcher", "Extractor", "Synthesizer", "Quality gate", "Assembler"]}
-    />
   );
 }
 

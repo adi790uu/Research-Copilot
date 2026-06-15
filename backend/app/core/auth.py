@@ -23,19 +23,41 @@ class CurrentUser:
     """Set of session claims we care about. Add fields as the product grows."""
 
 
+class _AuthShim:
+    """Minimal Requestish wrapper that overrides Authorization with a query token.
+
+    EventSource can't send custom headers, so the SSE endpoint passes the
+    Clerk JWT in `?token=...`. We forward all other headers unchanged so the
+    Clerk SDK keeps its usual behavior (CSRF, origin checks, etc.).
+    """
+
+    def __init__(self, request: Request, token: str) -> None:
+        self._headers = dict(request.headers)
+        self._headers["authorization"] = f"Bearer {token}"
+
+    @property
+    def headers(self) -> dict[str, str]:
+        return self._headers
+
+
 async def get_current_user(request: Request) -> CurrentUser:
     """FastAPI dependency: validate the Clerk session JWT and return the user.
 
     Reads `Authorization: Bearer <jwt>` from the request and verifies against
-    Clerk's JWKS via the official SDK. Raises 401 on any failure.
+    Clerk's JWKS via the official SDK. As a fallback for `EventSource` (which
+    can't set headers), accepts `?token=<jwt>` in the query string. Raises 401
+    on any failure.
     """
     settings = get_settings()
     if not settings.clerk_secret_key:
         # Fail loud in production; tests override this dependency.
         raise UnauthorizedError("Auth is not configured on this server")
 
+    query_token = request.query_params.get("token")
+    requestish = _AuthShim(request, query_token) if query_token else request
+
     state = authenticate_request(
-        request,
+        requestish,
         AuthenticateRequestOptions(secret_key=settings.clerk_secret_key),
     )
 

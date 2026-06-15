@@ -4,7 +4,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import CurrentUser
-from app.persistence.models import ChatORM, MessageORM, SessionORM, UserORM
+from app.persistence.models import ChatORM, MessageORM, ReportORM, SessionORM, UserORM
 
 
 class UserRepository:
@@ -101,6 +101,41 @@ class SessionRepository:
             .limit(limit)
         )
         return result.scalars().all()
+
+    async def set_status(self, session_id: str, status: str) -> SessionORM | None:
+        row = await self.get(session_id)
+        if row is None:
+            return None
+        row.status = status
+        await self._db.flush()
+        await self._db.refresh(row)
+        return row
+
+
+class ReportRepository:
+    """Reports are scoped to a user via their parent session. The caller is
+    expected to verify session ownership before writing here."""
+
+    def __init__(self, db: AsyncSession) -> None:
+        self._db = db
+
+    async def upsert(self, *, session_id: str, content: dict) -> ReportORM:
+        existing = await self.get_by_session(session_id)
+        if existing is None:
+            row = ReportORM(session_id=session_id, content=content)
+            self._db.add(row)
+        else:
+            existing.content = content
+            row = existing
+        await self._db.flush()
+        await self._db.refresh(row)
+        return row
+
+    async def get_by_session(self, session_id: str) -> ReportORM | None:
+        result = await self._db.execute(
+            select(ReportORM).where(ReportORM.session_id == session_id)
+        )
+        return result.scalar_one_or_none()
 
 
 class ChatRepository:

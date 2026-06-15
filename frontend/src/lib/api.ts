@@ -8,6 +8,7 @@ import type {
   ChatWithMessages,
   Message,
   MessageCreate,
+  Report,
   Session,
   SessionCreate,
   User,
@@ -15,6 +16,8 @@ import type {
 
 const BASE_URL =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "/api";
+
+export const apiBaseUrl = BASE_URL;
 
 export class ApiError extends Error {
   constructor(
@@ -85,6 +88,9 @@ interface ApiClient {
     create: (payload: SessionCreate) => Promise<Session>;
     list: () => Promise<Session[]>;
     get: (id: string) => Promise<Session>;
+    run: (id: string) => Promise<{ session_id: string; status: string }>;
+    report: (id: string) => Promise<Report>;
+    streamUrl: (id: string, token: string) => string;
   };
   chats: {
     create: (payload: ChatCreate) => Promise<Chat>;
@@ -109,6 +115,13 @@ function buildClient(fetcher: Fetcher): ApiClient {
         }),
       list: () => fetcher<Session[]>("/sessions"),
       get: (id) => fetcher<Session>(`/sessions/${id}`),
+      run: (id) =>
+        fetcher<{ session_id: string; status: string }>(`/sessions/${id}/run`, {
+          method: "POST",
+        }),
+      report: (id) => fetcher<Report>(`/sessions/${id}/report`),
+      streamUrl: (id, token) =>
+        `${BASE_URL}/sessions/${id}/stream?token=${encodeURIComponent(token)}`,
     },
     chats: {
       create: (payload) =>

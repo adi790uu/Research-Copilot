@@ -64,3 +64,88 @@ export interface MessageCreate {
 export interface ChatWithMessages extends Chat {
   messages: Message[];
 }
+
+// ---------------------------------------------------------------------------
+// Workflow events + report (mirrors backend app/domain/events.py + report.py).
+// ---------------------------------------------------------------------------
+
+export type WorkflowNode =
+  | "planner"
+  | "researcher"
+  | "extractor"
+  | "synthesizer"
+  | "quality_gate"
+  | "assembler";
+
+interface BaseEvent {
+  session_id: string;
+  at: string;
+}
+
+export interface RunStartedEvent extends BaseEvent {
+  type: "run_started";
+}
+export interface NodeStartedEvent extends BaseEvent {
+  type: "node_started";
+  node: WorkflowNode;
+  attempt: number;
+}
+export interface NodeCompletedEvent extends BaseEvent {
+  type: "node_completed";
+  node: WorkflowNode;
+  attempt: number;
+  duration_ms: number;
+}
+export interface NodeFailedEvent extends BaseEvent {
+  type: "node_failed";
+  node: WorkflowNode;
+  attempt: number;
+  message: string;
+}
+export interface ReportReadyEvent extends BaseEvent {
+  type: "report_ready";
+  report_id: string;
+}
+export interface RunFailedEvent extends BaseEvent {
+  type: "run_failed";
+  message: string;
+}
+
+export type WorkflowEvent =
+  | RunStartedEvent
+  | NodeStartedEvent
+  | NodeCompletedEvent
+  | NodeFailedEvent
+  | ReportReadyEvent
+  | RunFailedEvent;
+
+export interface Source {
+  id: string;
+  url: string;
+  title: string;
+  snippet: string | null;
+}
+
+export interface ReportSection {
+  content: string;
+  source_ids: string[];
+}
+
+export interface ReportContent {
+  company_overview: ReportSection;
+  products_and_services: ReportSection;
+  target_customers: ReportSection;
+  business_signals: ReportSection;
+  risks_and_challenges: ReportSection;
+  discovery_questions: ReportSection;
+  outreach_strategy: ReportSection;
+  unknowns: ReportSection;
+  sources: Source[];
+}
+
+export interface Report {
+  id: string;
+  session_id: string;
+  content: ReportContent;
+  created_at: string;
+}
