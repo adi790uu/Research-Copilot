@@ -4,9 +4,10 @@ import { Link, useParams } from "react-router-dom";
 
 import { ApiError, useApi } from "../lib/api";
 import { formatLongDate, formatTime, shortId } from "../lib/format";
-import type { Session } from "../lib/types";
+import type { Chat, ChatWithMessages, Session } from "../lib/types";
 import { Status, statusTone } from "../components/ui/Pill";
 import { SectionHeading } from "../components/ui/SectionHeading";
+import { ChatPanel } from "../components/session/ChatPanel";
 import { ReportSkeleton, ReportView } from "../components/session/ReportView";
 import { WorkflowProgress } from "../components/session/WorkflowProgress";
 import { useWorkflowStream } from "../hooks/useWorkflowStream";
@@ -58,6 +59,23 @@ export default function SessionDetail() {
     enabled: reportEnabled && id.length > 0,
   });
 
+  // Auto-create or fetch the session-linked chat once the report is ready.
+  const sessionChat = useQuery({
+    queryKey: ["session-chat", id],
+    enabled: reportEnabled && id.length > 0,
+    queryFn: async (): Promise<ChatWithMessages> => {
+      const list = await api.chats.list();
+      const existing: Chat | undefined = list.find((c) => c.session_id === id);
+      const chat =
+        existing ??
+        (await api.chats.create({
+          title: `Follow-up — ${session.data?.company_name ?? "briefing"}`,
+          session_id: id,
+        }));
+      return api.chats.get(chat.id);
+    },
+  });
+
   return (
     <div className="mx-auto max-w-2xl px-6 md:px-10 pt-12 md:pt-16 pb-24 stagger">
       <div>
@@ -70,7 +88,14 @@ export default function SessionDetail() {
       </div>
 
       {session.isLoading && <SkeletonHeader />}
-      {session.error && <ErrorCard error={session.error} />}
+      {session.error && (
+        <ErrorCard
+          label="Could not load brief"
+          error={session.error}
+          onRetry={() => session.refetch()}
+          retrying={session.isFetching}
+        />
+      )}
       {session.data && <SessionHero session={session.data} />}
 
       <section className="mt-20">
@@ -95,6 +120,14 @@ export default function SessionDetail() {
         <div className="mt-6">
           {report.data ? (
             <ReportView report={report.data} />
+          ) : report.error && reportEnabled ? (
+            <ErrorCard
+              label="Briefing failed to load"
+              error={report.error}
+              onRetry={() => report.refetch()}
+              retrying={report.isFetching}
+              inline
+            />
           ) : stream.phase === "running" || report.isLoading ? (
             <ReportSkeleton />
           ) : (
@@ -106,7 +139,24 @@ export default function SessionDetail() {
       <section className="mt-16">
         <SectionHeading number="03" label="Follow-up" meta="Grounded chat" />
         <div className="mt-6">
-          <ChatPlaceholder />
+          {sessionChat.data && report.data ? (
+            <ChatPanel
+              chat={sessionChat.data}
+              sources={report.data.content.sources}
+            />
+          ) : sessionChat.error && reportEnabled ? (
+            <ErrorCard
+              label="Chat failed to open"
+              error={sessionChat.error}
+              onRetry={() => sessionChat.refetch()}
+              retrying={sessionChat.isFetching}
+              inline
+            />
+          ) : reportEnabled && (sessionChat.isLoading || report.isLoading) ? (
+            <ChatSkeleton />
+          ) : (
+            <ChatPlaceholder />
+          )}
         </div>
       </section>
     </div>
@@ -185,14 +235,36 @@ function SkeletonHeader() {
   );
 }
 
-function ErrorCard({ error }: { error: unknown }) {
+function ErrorCard({
+  label,
+  error,
+  onRetry,
+  retrying,
+  inline,
+}: {
+  label: string;
+  error: unknown;
+  onRetry?: () => void;
+  retrying?: boolean;
+  inline?: boolean;
+}) {
   const message = error instanceof ApiError ? error.message : "Failed to load";
   return (
-    <div className="mt-10 border-l-2 border-bad/60 pl-4 py-2">
+    <div className={`${inline ? "" : "mt-10 "}border-l-2 border-bad/60 pl-4 py-2`}>
       <p className="font-mono text-xs uppercase tracking-wider text-bad mb-1">
-        Could not load brief
+        {label}
       </p>
       <p className="text-sm text-ink-soft">{message}</p>
+      {onRetry && (
+        <button
+          type="button"
+          onClick={onRetry}
+          disabled={retrying}
+          className="btn-ghost mt-3 disabled:opacity-50"
+        >
+          {retrying ? "Retrying…" : "Try again →"}
+        </button>
+      )}
     </div>
   );
 }
@@ -249,5 +321,31 @@ function ChatPlaceholder() {
       title="Ask the brief anything."
       body="Once the report is ready, the follow-up chat opens. Ask what to lead with, what to avoid, who to copy on the email — answers grounded in the report and its sources."
     />
+  );
+}
+
+function ChatSkeleton() {
+  return (
+    <div
+      className="surface rounded-sm overflow-hidden animate-pulse"
+      aria-busy
+      style={{ minHeight: "20rem" }}
+    >
+      <div className="px-6 md:px-8 py-6 space-y-5">
+        <div className="space-y-2">
+          <div className="h-3 w-24 bg-ink/10 rounded-sm" />
+          <div className="h-4 w-2/3 bg-ink/15 rounded-sm" />
+          <div className="h-3 w-1/2 bg-ink/10 rounded-sm" />
+        </div>
+        <div className="flex flex-wrap gap-2 pt-2">
+          <div className="h-7 w-32 bg-ink/10 rounded-sm" />
+          <div className="h-7 w-40 bg-ink/10 rounded-sm" />
+          <div className="h-7 w-36 bg-ink/10 rounded-sm" />
+        </div>
+      </div>
+      <div className="border-t border-rule/10 px-6 md:px-8 py-4">
+        <div className="h-9 w-full bg-ink/5 rounded-sm" />
+      </div>
+    </div>
   );
 }

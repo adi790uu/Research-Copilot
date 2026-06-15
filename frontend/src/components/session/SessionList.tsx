@@ -32,7 +32,7 @@ function SessionRow({ session, index }: { session: Session; index: number }) {
     <li className="rule-b">
       <Link
         to={`/app/sessions/${session.id}`}
-        className="group grid grid-cols-[2.5rem_1fr_auto] items-baseline gap-x-5 py-5 transition-colors hover:bg-bg-elev/60 -mx-3 px-3 rounded-sm"
+        className="group grid grid-cols-[2rem_1fr_auto] sm:grid-cols-[2.5rem_1fr_auto] items-baseline gap-x-3 sm:gap-x-5 py-5 transition-colors hover:bg-bg-elev/60 -mx-3 px-3 rounded-sm"
       >
         <span
           aria-hidden
@@ -65,7 +65,7 @@ function SessionRow({ session, index }: { session: Session; index: number }) {
           >
             {formatRelative(session.created_at)}
           </time>
-          <span className="font-mono text-[0.625rem] uppercase tracking-wider text-ink-faint/60 mt-1">
+          <span className="hidden sm:block font-mono text-[0.625rem] uppercase tracking-wider text-ink-faint/60 mt-1">
             {shortId(session.id, 4)}
           </span>
         </div>

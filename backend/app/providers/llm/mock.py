@@ -1,4 +1,4 @@
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from typing import TypeVar
 
 from pydantic import BaseModel
@@ -6,6 +6,7 @@ from pydantic import BaseModel
 T = TypeVar("T", bound=BaseModel)
 
 StructuredFactory = Callable[[str, type[BaseModel]], BaseModel]
+StreamResponder = Callable[[str], list[str]]
 
 
 class MockLLMProvider:
@@ -21,11 +22,14 @@ class MockLLMProvider:
         *,
         text_responses: list[str] | None = None,
         structured_factory: StructuredFactory | None = None,
+        stream_responder: StreamResponder | None = None,
     ) -> None:
         self._text = list(text_responses or [])
         self._structured = structured_factory
+        self._stream = stream_responder
         self.complete_calls: list[str] = []
         self.structured_calls: list[tuple[str, type[BaseModel]]] = []
+        self.stream_calls: list[str] = []
 
     async def complete(self, prompt: str, *, temperature: float = 0.2) -> str:
         self.complete_calls.append(prompt)
@@ -47,3 +51,15 @@ class MockLLMProvider:
         if not isinstance(result, schema):
             raise TypeError(f"structured_factory returned {type(result)}, expected {schema}")
         return result
+
+    async def stream(self, prompt: str, *, temperature: float = 0.2) -> AsyncIterator[str]:
+        self.stream_calls.append(prompt)
+        if self._stream is not None:
+            chunks = self._stream(prompt)
+        elif self._text:
+            chunks = self._text.pop(0).split(" ")
+            chunks = [c + " " for c in chunks[:-1]] + chunks[-1:]
+        else:
+            chunks = []
+        for chunk in chunks:
+            yield chunk

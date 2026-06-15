@@ -1,3 +1,4 @@
+from collections.abc import AsyncIterator
 from typing import TypeVar
 
 from langchain_core.messages import HumanMessage
@@ -31,3 +32,13 @@ class OpenAIProvider:
     ) -> T:
         client = self._client(temperature).with_structured_output(schema)
         return await client.ainvoke([HumanMessage(content=prompt)])  # type: ignore[return-value]
+
+    async def stream(self, prompt: str, *, temperature: float = 0.2) -> AsyncIterator[str]:
+        async for chunk in self._client(temperature).astream([HumanMessage(content=prompt)]):
+            content = chunk.content
+            if isinstance(content, list):
+                for part in content:
+                    if isinstance(part, str) and part:
+                        yield part
+            elif content:
+                yield str(content)

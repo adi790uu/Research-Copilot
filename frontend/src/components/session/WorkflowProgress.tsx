@@ -86,7 +86,7 @@ function Header({
       : "Retry";
 
   return (
-    <div className="flex items-center justify-between gap-6 px-7 py-5 rule-b">
+    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 sm:gap-6 px-5 sm:px-7 py-5 rule-b">
       <div className="space-y-1">
         <p className="eyebrow">Orchestration</p>
         <p className="text-sm text-ink-soft">
@@ -100,7 +100,7 @@ function Header({
         type="button"
         onClick={onStart}
         disabled={starting || phase === "running" || startDisabled}
-        className="inline-flex items-center gap-2 px-4 py-2 border border-ink/20 hover:border-ink/40 disabled:opacity-40 disabled:cursor-not-allowed font-mono text-xs uppercase tracking-wider text-ink transition-colors"
+        className="inline-flex items-center gap-2 px-4 py-2 border border-ink/20 hover:border-ink/40 disabled:opacity-40 disabled:cursor-not-allowed font-mono text-xs uppercase tracking-wider text-ink transition-colors self-start sm:self-auto"
       >
         {phase === "running" && (
           <span
@@ -126,19 +126,23 @@ function NodeRow({
   state: NodeState;
 }) {
   return (
-    <li className="flex items-start gap-6 px-7 py-4">
+    <li className="flex items-start gap-4 sm:gap-6 px-5 sm:px-7 py-4">
       <span className="font-mono tabular-nums text-xs text-ink-faint/70 mt-0.5">
         {String(ordinal).padStart(2, "0")}
       </span>
       <div className="flex-1 min-w-0">
-        <div className="flex items-baseline gap-3">
+        <div className="flex items-baseline flex-wrap gap-x-3 gap-y-1">
           <span className="text-sm text-ink">{label}</span>
           <Phase state={state} />
+          <span className="font-mono tabular-nums text-[0.6875rem] text-ink-faint/70 whitespace-nowrap sm:hidden">
+            {state.durationMs != null ? formatMs(state.durationMs) : ""}
+            {state.attempt > 1 ? ` · try ${state.attempt}` : ""}
+          </span>
         </div>
         <p className="text-xs text-ink-faint mt-0.5">{blurb}</p>
       </div>
-      <span className="font-mono tabular-nums text-[0.6875rem] text-ink-faint/70 mt-0.5 whitespace-nowrap">
-        {state.durationMs != null ? `${formatMs(state.durationMs)}` : ""}
+      <span className="hidden sm:inline font-mono tabular-nums text-[0.6875rem] text-ink-faint/70 mt-0.5 whitespace-nowrap">
+        {state.durationMs != null ? formatMs(state.durationMs) : ""}
         {state.attempt > 1 ? ` · try ${state.attempt}` : ""}
       </span>
     </li>
