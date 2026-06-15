@@ -2,7 +2,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useChatStream } from "../../hooks/useChatStream";
 import type { RunPhase, StreamState } from "../../hooks/useWorkflowStream";
-import type { ChatWithMessages, Report, Source, WorkflowNode } from "../../lib/types";
+import type {
+  ChatWithMessages,
+  ClarificationQuestion,
+  Report,
+  Source,
+  WorkflowNode,
+} from "../../lib/types";
 import { formatRelative } from "../../lib/format";
 import { SourceCitation } from "./SourceCitation";
 
@@ -13,12 +19,11 @@ const PROMPTS = [
 ];
 
 const RUNNING_NODE_LABEL: Record<WorkflowNode, string> = {
-  planner: "Drafting the research plan",
-  researcher: "Searching across sources",
-  extractor: "Pulling citation-bearing facts",
-  synthesizer: "Composing the briefing",
-  quality_gate: "Reviewing coverage",
-  assembler: "Finalising the brief",
+  clarify_with_user: "Checking the objective",
+  write_research_brief: "Structuring the brief",
+  create_research_plan: "Building the research plan",
+  research_supervisor: "Researching across sources",
+  final_report_generation: "Writing the brief",
 };
 
 interface Props {
@@ -35,6 +40,17 @@ interface Props {
   starting: boolean;
   canStart: boolean;
   onOpenReport: () => void;
+
+  // Plan-approval (interrupt_after=create_research_plan).
+  onApprovePlan: () => void;
+  approvingPlan: boolean;
+  approvePlanError?: string | null;
+  onOpenPlan: () => void;
+
+  // Clarification (clarify_with_user terminated graph for user input).
+  onSubmitClarifications: (answers: string[]) => void;
+  submittingClarifications: boolean;
+  clarificationError?: string | null;
 }
 
 export function ChatPanel({
@@ -48,6 +64,13 @@ export function ChatPanel({
   starting,
   canStart,
   onOpenReport,
+  onApprovePlan,
+  approvingPlan,
+  approvePlanError,
+  onOpenPlan,
+  onSubmitClarifications,
+  submittingClarifications,
+  clarificationError,
 }: Props) {
   const { messages, streaming, error, sendMessage } = useChatStream(
     chat?.id ?? null,
@@ -112,6 +135,13 @@ export function ChatPanel({
             canStart={canStart}
             onStart={onStart}
             onOpenReport={onOpenReport}
+            onApprovePlan={onApprovePlan}
+            approvingPlan={approvingPlan}
+            approvePlanError={approvePlanError}
+            onOpenPlan={onOpenPlan}
+            onSubmitClarifications={onSubmitClarifications}
+            submittingClarifications={submittingClarifications}
+            clarificationError={clarificationError}
           />
 
           {messages.length > 0 && (
@@ -195,6 +225,10 @@ function composerPlaceholder(phase: RunPhase): string {
       return "Start the research above to begin the conversation.";
     case "running":
       return "Researching… you can chat once the brief is ready.";
+    case "awaiting_clarification":
+      return "Answer the clarifying questions above to continue.";
+    case "awaiting_plan_approval":
+      return "Approve the plan above to dispatch the researchers.";
     case "failed":
       return "Run halted. Restart the research to chat.";
     case "completed":
@@ -215,6 +249,13 @@ interface StatusBlockProps {
   canStart: boolean;
   onStart: () => void;
   onOpenReport: () => void;
+  onApprovePlan: () => void;
+  approvingPlan: boolean;
+  approvePlanError?: string | null;
+  onOpenPlan: () => void;
+  onSubmitClarifications: (answers: string[]) => void;
+  submittingClarifications: boolean;
+  clarificationError?: string | null;
 }
 
 function StatusBlock({
@@ -226,6 +267,13 @@ function StatusBlock({
   canStart,
   onStart,
   onOpenReport,
+  onApprovePlan,
+  approvingPlan,
+  approvePlanError,
+  onOpenPlan,
+  onSubmitClarifications,
+  submittingClarifications,
+  clarificationError,
 }: StatusBlockProps) {
   if (phase === "idle") {
     return (
@@ -260,6 +308,30 @@ function StatusBlock({
 
   if (phase === "running") {
     return <RunningCard stream={stream} />;
+  }
+
+  if (phase === "awaiting_clarification" && stream.clarification) {
+    return (
+      <ClarificationCard
+        questions={stream.clarification}
+        submitting={submittingClarifications}
+        error={clarificationError ?? null}
+        onSubmit={onSubmitClarifications}
+      />
+    );
+  }
+
+  if (phase === "awaiting_plan_approval" && stream.plan) {
+    return (
+      <PlanApprovalCard
+        userMessage={stream.plan.user_message}
+        subtopicCount={stream.plan.subtopics.length}
+        approving={approvingPlan}
+        error={approvePlanError ?? null}
+        onApprove={onApprovePlan}
+        onOpenPlan={onOpenPlan}
+      />
+    );
   }
 
   if (phase === "failed") {
@@ -358,12 +430,11 @@ function RunningCard({ stream }: { stream: StreamState }) {
 
 function findActiveNode(stream: StreamState): WorkflowNode | null {
   const NODES: WorkflowNode[] = [
-    "planner",
-    "researcher",
-    "extractor",
-    "synthesizer",
-    "quality_gate",
-    "assembler",
+    "clarify_with_user",
+    "write_research_brief",
+    "create_research_plan",
+    "research_supervisor",
+    "final_report_generation",
   ];
   // Prefer currently running; else last completed.
   const running = NODES.find((n) => stream.nodes[n]?.phase === "running");
@@ -372,6 +443,184 @@ function findActiveNode(stream: StreamState): WorkflowNode | null {
     if (stream.nodes[NODES[i]]?.phase === "completed") return NODES[i];
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Clarification + plan-approval cards.
+// ---------------------------------------------------------------------------
+
+function ClarificationCard({
+  questions,
+  submitting,
+  error,
+  onSubmit,
+}: {
+  questions: ClarificationQuestion[];
+  submitting: boolean;
+  error: string | null;
+  onSubmit: (answers: string[]) => void;
+}) {
+  const [answers, setAnswers] = useState<string[]>(() =>
+    questions.map(() => "")
+  );
+
+  const setAt = (i: number, v: string) =>
+    setAnswers((cur) => {
+      const next = cur.slice();
+      next[i] = v;
+      return next;
+    });
+
+  const canSubmit =
+    !submitting && answers.every((a) => a.trim().length > 0);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!canSubmit) return;
+    onSubmit(answers.map((a) => a.trim()));
+  };
+
+  return (
+    <form
+      onSubmit={handleSubmit}
+      className="relative overflow-hidden rounded-sm border border-warn/30 bg-warn/5 px-6 sm:px-8 py-6"
+    >
+      <div className="flex items-center gap-3">
+        <span
+          aria-hidden
+          className="h-2 w-2 rounded-full bg-warn animate-pulse-dot"
+        />
+        <p className="eyebrow text-warn">Quick clarification</p>
+      </div>
+      <p
+        className="mt-3 font-display italic text-xl text-ink leading-tight"
+        style={{ fontVariationSettings: '"opsz" 144, "SOFT" 100, "WONK" 1' }}
+      >
+        Help me aim the research.
+      </p>
+
+      <ol className="mt-5 space-y-5">
+        {questions.map((q, i) => (
+          <li key={i} className="space-y-2">
+            <p className="text-sm text-ink leading-relaxed">
+              <span className="font-mono text-[0.6875rem] uppercase tracking-wider text-ink-faint mr-2">
+                Q{i + 1}
+              </span>
+              {q.question}
+            </p>
+            {q.suggested_answers.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {q.suggested_answers.map((s) => {
+                  const active = answers[i] === s;
+                  return (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => setAt(i, s)}
+                      disabled={submitting}
+                      className={`px-3 py-1.5 rounded-full text-xs transition-colors border ${
+                        active
+                          ? "bg-ink text-bg border-ink"
+                          : "border-ink/15 hover:border-ink/40 text-ink-soft"
+                      } disabled:opacity-50 disabled:cursor-not-allowed`}
+                    >
+                      {s}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            <input
+              type="text"
+              value={answers[i] ?? ""}
+              onChange={(e) => setAt(i, e.target.value)}
+              placeholder="Or type your own answer…"
+              disabled={submitting}
+              className="input w-full mt-1"
+            />
+          </li>
+        ))}
+      </ol>
+
+      <div className="mt-5 flex items-center justify-between gap-3">
+        <p className="font-mono text-[0.625rem] uppercase tracking-wider text-ink-faint">
+          Submitting kicks the research off.
+        </p>
+        <button
+          type="submit"
+          className="btn-primary"
+          disabled={!canSubmit}
+        >
+          {submitting ? "Submitting…" : "Continue"}
+          <span aria-hidden className="arrow">→</span>
+        </button>
+      </div>
+
+      {error && (
+        <p className="mt-3 font-mono text-[0.6875rem] uppercase tracking-wider text-bad">
+          {error}
+        </p>
+      )}
+    </form>
+  );
+}
+
+function PlanApprovalCard({
+  userMessage,
+  subtopicCount,
+  approving,
+  error,
+  onApprove,
+  onOpenPlan,
+}: {
+  userMessage: string;
+  subtopicCount: number;
+  approving: boolean;
+  error: string | null;
+  onApprove: () => void;
+  onOpenPlan: () => void;
+}) {
+  return (
+    <div className="relative overflow-hidden rounded-sm border border-warn/30 bg-warn/5 px-6 sm:px-8 py-6">
+      <div className="flex items-center gap-3">
+        <span aria-hidden className="h-2 w-2 rounded-full bg-warn" />
+        <p className="eyebrow text-warn">Plan ready · approval needed</p>
+      </div>
+      <p
+        className="mt-3 font-display italic text-xl text-ink leading-tight"
+        style={{ fontVariationSettings: '"opsz" 144, "SOFT" 100, "WONK" 1' }}
+      >
+        {userMessage}
+      </p>
+      <p className="mt-2 text-sm text-ink-soft">
+        {subtopicCount} subtopic{subtopicCount === 1 ? "" : "s"} queued.
+        Review the full plan on the right before dispatching.
+      </p>
+      <div className="mt-5 flex items-center gap-3 flex-wrap">
+        <button
+          type="button"
+          onClick={onApprove}
+          disabled={approving}
+          className="btn-primary"
+        >
+          {approving ? "Dispatching…" : "Approve & run"}
+          <span aria-hidden className="arrow">→</span>
+        </button>
+        <button
+          type="button"
+          onClick={onOpenPlan}
+          className="btn-ghost text-xs"
+        >
+          Review plan →
+        </button>
+      </div>
+      {error && (
+        <p className="mt-3 font-mono text-[0.6875rem] uppercase tracking-wider text-bad">
+          {error}
+        </p>
+      )}
+    </div>
+  );
 }
 
 function CompletionCard({

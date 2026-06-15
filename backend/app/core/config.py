@@ -12,8 +12,16 @@ class Settings(BaseSettings):
     )
 
     openai_api_key: str = Field(default="")
+    # Optional comma-separated key pool. When set, _create_model round-robins
+    # across these per LLM call instead of using openai_api_key. Used to spread
+    # load across many GitHub PATs against the Models API (which rate-limits
+    # aggressively per token).
+    openai_api_keys: str = Field(default="")
     openai_model: str = Field(default="gpt-4o-mini")
     openai_base_url: str = Field(default="")
+    # Cooldown applied to a key after it returns 429, in seconds. The default
+    # matches typical per-minute rate-limit windows.
+    openai_key_cooldown_seconds: float = Field(default=60.0)
     tavily_api_key: str = Field(default="")
 
     # Auth (Clerk). Without these set, every protected endpoint returns 401.
@@ -30,8 +38,13 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO")
     cors_origins: str = Field(default="http://localhost:5173")
 
-    workflow_max_attempts: int = Field(default=2)
     workflow_search_results_per_query: int = Field(default=5)
+    tavily_search_depth: str = Field(default="advanced")  # "basic" | "advanced"
+    workflow_allow_clarification: bool = Field(default=True)
+    workflow_max_concurrent_research_units: int = Field(default=5)
+    workflow_max_researcher_iterations: int = Field(default=4)
+    workflow_max_react_tool_calls: int = Field(default=8)
+    workflow_auto_approve_plan: bool = Field(default=False)
 
     @property
     def cors_origin_list(self) -> list[str]:

@@ -1,66 +1,210 @@
-import operator
-from typing import Annotated, TypedDict
+"""LangGraph state + structured outputs for the company-research workflow."""
 
+from __future__ import annotations
+
+import operator
+from typing import Annotated, Any, Literal, TypedDict
+
+from langchain_core.messages import MessageLikeRepresentation
+from langgraph.graph import MessagesState
 from pydantic import BaseModel, Field
 
 from app.domain.report import ReportContent, Source
+from app.workflow.prompts import REPORT_SECTIONS
+
+# ----- Reducers ----------------------------------------------------------
+
+ReportSectionName = Literal[
+    "company_overview",
+    "products_and_services",
+    "target_customers",
+    "business_signals",
+    "risks_and_challenges",
+    "discovery_questions",
+    "outreach_strategy",
+    "unknowns",
+]
+SourceStrategy = Literal["company_site_first", "external_first", "both_parallel"]
+ToolsRouting = Literal["company_site", "web", "both"]
+Priority = Literal["depth", "breadth"]
 
 
-class SubQuery(BaseModel):
-    """One unit of research the planner emits, scoped to a report section."""
-
-    query: str
-    section: str  # one of ReportContent field names (or "general")
-
-
-class Fact(BaseModel):
-    """Extracted, citation-bearing claim used downstream by the synthesizer."""
-
-    text: str
-    source_id: str
-    section: str  # target ReportContent field
-
-
-class QualityCheck(BaseModel):
-    passed: bool
-    reasoning: str
-    missing_sections: list[str] = Field(default_factory=list)
-    refined_subqueries: list[SubQuery] = Field(default_factory=list)
-
-
-class NodeError(BaseModel):
-    node: str
-    message: str
+def override_reducer(current: list[Any], new: Any) -> list[Any]:
+    """Append-by-default reducer; sentinel `{"type": "override", "value": [...]}` replaces."""
+    if isinstance(new, dict) and new.get("type") == "override":
+        value = new.get("value", [])
+        return list(value) if isinstance(value, list) else [value]
+    return list(operator.add(current or [], new or []))
 
 
 def _dedup_sources(left: list[Source], right: list[Source]) -> list[Source]:
-    seen: dict[str, Source] = {s.url: s for s in left}
-    for s in right:
+    seen: dict[str, Source] = {s.url: s for s in (left or [])}
+    for s in right or []:
         seen.setdefault(s.url, s)
     return list(seen.values())
 
 
-def _merge_subqueries(
-    left: list[SubQuery], right: list[SubQuery]
-) -> list[SubQuery]:
-    """Quality gate emits a refined subquery list to replace the previous one."""
-    return right if right else left
+# ----- Structured outputs ------------------------------------------------
 
 
-class GraphState(TypedDict, total=False):
+class ClarificationQuestion(BaseModel):
+    question: str = Field(description="The clarification question to ask the user.")
+    suggested_answers: list[str] = Field(
+        default_factory=list,
+        description="2-4 short suggested answers the user can tap to select.",
+    )
+
+
+class ClarifyWithUser(BaseModel):
+    need_clarification: bool = Field(
+        description="Whether the objective is too ambiguous to research without follow-up."
+    )
+    questions: list[ClarificationQuestion] = Field(
+        default_factory=list,
+        description="1-3 clarification questions. Empty when need_clarification is false.",
+    )
+
+
+class ResearchBrief(BaseModel):
+    research_goal: str = Field(description="2-3 sentence statement of what to deliver.")
+    key_entities: list[str] = Field(
+        default_factory=list,
+        description="People, products, competitors, or accounts the research must cover (besides the target company).",
+    )
+    constraints: list[str] = Field(
+        default_factory=list,
+        description="Only constraints the user explicitly stated.",
+    )
+    source_strategy: SourceStrategy = Field(
+        description="company_site_first (default), external_first, or both_parallel."
+    )
+
+
+class ResearchSubtopic(BaseModel):
+    title: str = Field(description="Short name for this subtopic.")
+    description: str = Field(description="1-2 sentences on what to investigate.")
+    section: ReportSectionName = Field(
+        description="Which report section this subtopic fills.",
+    )
+    tools: ToolsRouting = Field(
+        description="company_site, web, or both.",
+    )
+    priority: Priority = Field(description="depth or breadth.")
+
+
+class ResearchPlan(BaseModel):
+    user_message: str = Field(
+        description="2-3 sentence first-person note to the user about the planned research."
+    )
+    strategy_summary: str = Field(description="1-2 sentence internal note on overall strategy.")
+    subtopics: list[ResearchSubtopic] = Field(
+        description="Ordered list; each becomes one parallel researcher.",
+        min_length=1,
+        max_length=8,
+    )
+
+
+class ConductResearch(BaseModel):
+    """Delegate one research task to a sub-agent. Each call spawns an independent researcher."""
+
+    research_topic: str = Field(
+        description=(
+            "Detailed, standalone research instructions. Must name the company, "
+            "the angle, and what good output looks like."
+        )
+    )
+    tools_to_use: ToolsRouting = Field(
+        description="company_site | web | both.",
+    )
+    section: ReportSectionName = Field(
+        description="Which of the 8 fixed report sections this researcher fills.",
+    )
+
+
+class ResearchComplete(BaseModel):
+    """Call when research is sufficient to write the final report."""
+
+
+# Sanity check — keeps the prompts and state in sync.
+assert set(REPORT_SECTIONS) == set(ReportSectionName.__args__), (  # type: ignore[attr-defined]
+    "REPORT_SECTIONS must match ReportSectionName literal"
+)
+
+
+class _PolishedSection(BaseModel):
+    """Pass-2 review output for a single section."""
+
+    content: str
+    source_ids: list[str] = Field(default_factory=list)
+
+
+# ----- LangGraph states --------------------------------------------------
+
+
+class AgentState(MessagesState):
+    """Top-level state for the company-research graph.
+
+    `research_plan` is stored as a plain dict (the `ResearchPlan.model_dump`
+    output) rather than the Pydantic instance — LangGraph's msgpack
+    serializer warns on unregistered types, and a dict round-trips through
+    the checkpointer cleanly. The plan node fills this with
+    `plan.model_dump(mode="json")`; consumers can `ResearchPlan.model_validate`
+    if they need typed access.
+    """
+
     session_id: str
     company_name: str
     website: str
     objective: str
 
-    subqueries: Annotated[list[SubQuery], _merge_subqueries]
+    supervisor_messages: Annotated[list[MessageLikeRepresentation], override_reducer]
+    research_brief: str | None
+    research_plan: dict | None
+    notes: Annotated[list[str], override_reducer]
+    raw_notes: Annotated[list[str], override_reducer]
     sources: Annotated[list[Source], _dedup_sources]
-    facts: Annotated[list[Fact], operator.add]
-
-    sections_drafted: bool
-    quality: QualityCheck | None
-    attempt: int
-    max_attempts: int
-
-    errors: Annotated[list[NodeError], operator.add]
     report: ReportContent | None
+
+
+class SupervisorState(TypedDict, total=False):
+    company_name: str
+    website: str
+    supervisor_messages: Annotated[list[MessageLikeRepresentation], override_reducer]
+    research_brief: str
+    notes: Annotated[list[str], override_reducer]
+    raw_notes: Annotated[list[str], override_reducer]
+    sources: Annotated[list[Source], _dedup_sources]
+    research_iterations: int
+
+
+class ResearcherState(TypedDict, total=False):
+    researcher_messages: Annotated[list[MessageLikeRepresentation], operator.add]
+    research_topic: str
+    tools_to_use: ToolsRouting
+    section: ReportSectionName
+    company_name: str
+    website: str
+    tool_call_iterations: int
+    compressed_research: str
+    raw_notes: list[str]
+    sources: list[Source]
+
+
+__all__ = [
+    "AgentState",
+    "ClarificationQuestion",
+    "ClarifyWithUser",
+    "ConductResearch",
+    "Priority",
+    "ReportSectionName",
+    "ResearchBrief",
+    "ResearchComplete",
+    "ResearcherState",
+    "ResearchPlan",
+    "ResearchSubtopic",
+    "Source",
+    "SourceStrategy",
+    "SupervisorState",
+    "ToolsRouting",
+    "override_reducer",
+]

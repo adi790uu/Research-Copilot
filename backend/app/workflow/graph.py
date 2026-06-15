@@ -1,61 +1,58 @@
+"""Top-level LangGraph for the company-research workflow.
+
+Topology:
+    START
+      └─► clarify_with_user ─(needs clarification)─► END
+                            └─(no)─► write_research_brief
+                                      └─► create_research_plan
+                                            └─[interrupt_after]─► research_supervisor
+                                                                  └─► final_report_generation
+                                                                        └─► END
+"""
+
+from __future__ import annotations
+
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
+from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 
 from app.domain.events import NodeCompleted, NodeFailed, NodeName, NodeStarted
 from app.workflow.deps import WorkflowDeps
-from app.workflow.nodes.assembler import assembler
-from app.workflow.nodes.extractor import extractor
-from app.workflow.nodes.planner import planner
-from app.workflow.nodes.quality_gate import quality_gate
-from app.workflow.nodes.researcher import researcher
-from app.workflow.nodes.synthesizer import synthesizer
-from app.workflow.state import GraphState
+from app.workflow.nodes.clarify import clarify_with_user
+from app.workflow.nodes.final_report import final_report_generation
+from app.workflow.nodes.research_brief import write_research_brief
+from app.workflow.nodes.research_plan import create_research_plan
+from app.workflow.nodes.supervisor import get_supervisor_subgraph
+from app.workflow.state import AgentState
 
-NodeFn = Callable[[GraphState, WorkflowDeps], Awaitable[GraphState]]
+NodeFn = Callable[[AgentState, RunnableConfig], Awaitable[Any]]
 
 
 def _bind(
     name: NodeName, fn: NodeFn, deps: WorkflowDeps
-) -> Callable[[GraphState], Awaitable[GraphState]]:
-    async def wrapped(state: GraphState) -> GraphState:
+) -> Callable[[AgentState, RunnableConfig], Awaitable[Any]]:
+    async def wrapped(state: AgentState, config: RunnableConfig) -> Any:
         session_id = state.get("session_id", "")
-        # Planner is what increments `attempt`; while it runs, state still holds
-        # the pre-increment value, so report it as "starting attempt N+1".
-        raw = int(state.get("attempt", 0) or 0)
-        attempt = max(1, raw + 1 if name == "planner" else raw)
-
         if deps.emit is not None and session_id:
-            await deps.emit(
-                NodeStarted(session_id=session_id, node=name, attempt=attempt)
-            )
-
+            await deps.emit(NodeStarted(session_id=session_id, node=name, attempt=1))
         started = time.perf_counter()
         try:
-            result = await fn(state, deps)
-        except Exception as exc:  # noqa: BLE001 — emit & rethrow so the graph terminates
+            result = await fn(state, config)
+        except Exception as exc:  # noqa: BLE001
             if deps.emit is not None and session_id:
                 await deps.emit(
-                    NodeFailed(
-                        session_id=session_id,
-                        node=name,
-                        attempt=attempt,
-                        message=str(exc),
-                    )
+                    NodeFailed(session_id=session_id, node=name, attempt=1, message=str(exc))
                 )
             raise
-
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         if deps.emit is not None and session_id:
             await deps.emit(
                 NodeCompleted(
-                    session_id=session_id,
-                    node=name,
-                    attempt=attempt,
-                    duration_ms=elapsed_ms,
+                    session_id=session_id, node=name, attempt=1, duration_ms=elapsed_ms
                 )
             )
         return result
@@ -63,37 +60,43 @@ def _bind(
     return wrapped
 
 
-def _route_after_quality(state: GraphState) -> str:
-    quality = state.get("quality")
-    if quality is None or quality.passed:
-        return "assembler"
-    return "researcher"
-
-
 def build_graph(
     deps: WorkflowDeps,
     *,
     checkpointer: BaseCheckpointSaver | None = None,
 ) -> Any:
-    g: StateGraph = StateGraph(GraphState)
+    builder: StateGraph = StateGraph(AgentState)
 
-    g.add_node("planner", _bind(cast(NodeName, "planner"), planner, deps))
-    g.add_node("researcher", _bind(cast(NodeName, "researcher"), researcher, deps))
-    g.add_node("extractor", _bind(cast(NodeName, "extractor"), extractor, deps))
-    g.add_node("synthesizer", _bind(cast(NodeName, "synthesizer"), synthesizer, deps))
-    g.add_node("quality_gate", _bind(cast(NodeName, "quality_gate"), quality_gate, deps))
-    g.add_node("assembler", _bind(cast(NodeName, "assembler"), assembler, deps))
-
-    g.add_edge(START, "planner")
-    g.add_edge("planner", "researcher")
-    g.add_edge("researcher", "extractor")
-    g.add_edge("extractor", "synthesizer")
-    g.add_edge("synthesizer", "quality_gate")
-    g.add_conditional_edges(
-        "quality_gate",
-        _route_after_quality,
-        {"researcher": "researcher", "assembler": "assembler"},
+    builder.add_node(
+        "clarify_with_user",
+        _bind(cast(NodeName, "clarify_with_user"), clarify_with_user, deps),
     )
-    g.add_edge("assembler", END)
+    builder.add_node(
+        "write_research_brief",
+        _bind(cast(NodeName, "write_research_brief"), write_research_brief, deps),
+    )
+    builder.add_node(
+        "create_research_plan",
+        _bind(cast(NodeName, "create_research_plan"), create_research_plan, deps),
+    )
+    # The supervisor is itself a compiled subgraph; wrap so we still emit events.
+    supervisor_subgraph = get_supervisor_subgraph()
+    builder.add_node(
+        "research_supervisor",
+        _bind(cast(NodeName, "research_supervisor"), supervisor_subgraph.ainvoke, deps),  # type: ignore[arg-type]
+    )
+    builder.add_node(
+        "final_report_generation",
+        _bind(cast(NodeName, "final_report_generation"), final_report_generation, deps),
+    )
 
-    return g.compile(checkpointer=checkpointer) if checkpointer else g.compile()
+    builder.add_edge(START, "clarify_with_user")
+    builder.add_edge("write_research_brief", "create_research_plan")
+    builder.add_edge("create_research_plan", "research_supervisor")
+    builder.add_edge("research_supervisor", "final_report_generation")
+    builder.add_edge("final_report_generation", END)
+
+    return builder.compile(
+        checkpointer=checkpointer,
+        interrupt_after=["create_research_plan"],
+    )

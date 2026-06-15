@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator
-
 import re
 import unicodedata
+from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import Response, StreamingResponse
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import CurrentUser, get_current_user
@@ -53,6 +53,35 @@ async def run_session(
     return {"session_id": session_id, "status": "running"}
 
 
+class ClarificationAnswers(BaseModel):
+    answers: list[str] = Field(default_factory=list)
+
+
+@router.post("/clarifications", status_code=status.HTTP_202_ACCEPTED)
+async def submit_clarifications(
+    session_id: str,
+    payload: ClarificationAnswers,
+    request: Request,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict[str, str]:
+    """Resume a session that paused for clarification with the user's answers."""
+    await _service(request).submit_clarifications(
+        session_id=session_id, user_id=user.id, answers=payload.answers
+    )
+    return {"session_id": session_id, "status": "running"}
+
+
+@router.post("/plan/approve", status_code=status.HTTP_202_ACCEPTED)
+async def approve_plan(
+    session_id: str,
+    request: Request,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict[str, str]:
+    """Approve the research plan so the supervisor + final report can run."""
+    await _service(request).approve_plan(session_id=session_id, user_id=user.id)
+    return {"session_id": session_id, "status": "running"}
+
+
 def _sse_format(event: WorkflowEvent) -> bytes:
     """Encode a single SSE message: `event: <type>\\ndata: <json>\\n\\n`."""
     payload = event.model_dump_json()
@@ -91,7 +120,7 @@ async def stream_session(
                     return
                 try:
                     ev = await asyncio.wait_for(queue.get(), timeout=15.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # SSE keep-alive comment — prevents proxies from closing idle conns.
                     yield b": keep-alive\n\n"
                     continue

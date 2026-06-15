@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { ApiError, useApi } from "../../lib/api";
 import type { Report, Source } from "../../lib/types";
 import type { StreamState } from "../../hooks/useWorkflowStream";
+import { PlanArtifact } from "./PlanArtifact";
 import { ReportSkeleton, ReportView } from "./ReportView";
 import { WorkflowProgress } from "./WorkflowProgress";
 
@@ -19,6 +20,11 @@ interface Props {
   onStart: () => void;
   starting: boolean;
   startDisabled: boolean;
+
+  // Plan-approval flow (interrupt_after=create_research_plan).
+  onApprovePlan: () => void;
+  approvingPlan: boolean;
+  approvePlanError?: string | null;
 
   report: Report | null;
   reportLoading: boolean;
@@ -42,6 +48,9 @@ export function ArtifactPanel({
   onStart,
   starting,
   startDisabled,
+  onApprovePlan,
+  approvingPlan,
+  approvePlanError,
   report,
   reportLoading,
   reportError,
@@ -131,7 +140,16 @@ export function ArtifactPanel({
 
       <div className="flex-1 overflow-y-auto">
         {activeTab === "plan" && (
-          <div className="p-5 sm:p-6">
+          <div className="p-5 sm:p-6 space-y-6">
+            {stream.plan && (
+              <PlanArtifact
+                plan={stream.plan}
+                awaitingApproval={stream.phase === "awaiting_plan_approval"}
+                approving={approvingPlan}
+                onApprove={onApprovePlan}
+                approveError={approvePlanError}
+              />
+            )}
             <WorkflowProgress
               stream={stream}
               onStart={onStart}

@@ -22,6 +22,7 @@ dependencies = [
     "tavily-python>=0.5",
     "clerk-backend-api>=1.0",
     "weasyprint>=63.0",
+    "alembic>=1.18.4",
 ]
 
 [dependency-groups]

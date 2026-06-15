@@ -5,7 +5,7 @@ import { useParams } from "react-router-dom";
 import { ApiError, useApi } from "../lib/api";
 import { shortId } from "../lib/format";
 import type { Chat, ChatWithMessages } from "../lib/types";
-import { Status, statusTone } from "../components/ui/Pill";
+import { Status, statusLabel, statusTone } from "../components/ui/Pill";
 import { ArtifactPanel, type ArtifactTab } from "../components/session/ArtifactPanel";
 import { ChatPanel } from "../components/session/ChatPanel";
 import { useWorkflowStream, type RunPhase } from "../hooks/useWorkflowStream";
@@ -24,9 +24,15 @@ export default function SessionDetail() {
   const [streamEnabled, setStreamEnabled] = useState(false);
   useEffect(() => {
     if (!session.data) return;
-    if (session.data.status === "running" || session.data.status === "completed") {
-      setStreamEnabled(true);
-    }
+    const live = (
+      [
+        "running",
+        "completed",
+        "awaiting_clarification",
+        "awaiting_plan_approval",
+      ] as const
+    ).includes(session.data.status as never);
+    if (live) setStreamEnabled(true);
   }, [session.data]);
 
   const stream = useWorkflowStream(id, streamEnabled);
@@ -37,6 +43,23 @@ export default function SessionDetail() {
       setStreamEnabled(true);
       setArtifactTab("plan");
       setArtifactOpen(true);
+      queryClient.invalidateQueries({ queryKey: ["session", id] });
+    },
+  });
+
+  const submitClarifications = useMutation({
+    mutationFn: (answers: string[]) =>
+      api.sessions.submitClarifications(id, answers),
+    onSuccess: () => {
+      setStreamEnabled(true);
+      queryClient.invalidateQueries({ queryKey: ["session", id] });
+    },
+  });
+
+  const approvePlan = useMutation({
+    mutationFn: () => api.sessions.approvePlan(id),
+    onSuccess: () => {
+      setStreamEnabled(true);
       queryClient.invalidateQueries({ queryKey: ["session", id] });
     },
   });
@@ -188,7 +211,7 @@ export default function SessionDetail() {
               tone={statusTone(s.status)}
               pulse={s.status === "running"}
             >
-              {s.status}
+              {statusLabel(s.status)}
             </Status>
             {!artifactOpen && (
               <button
@@ -224,6 +247,26 @@ export default function SessionDetail() {
             setArtifactTab("report");
             setArtifactOpen(true);
           }}
+          onApprovePlan={() => approvePlan.mutate()}
+          approvingPlan={approvePlan.isPending}
+          approvePlanError={
+            approvePlan.error
+              ? (approvePlan.error as ApiError | Error).message
+              : null
+          }
+          onOpenPlan={() => {
+            setArtifactTab("plan");
+            setArtifactOpen(true);
+          }}
+          onSubmitClarifications={(answers) =>
+            submitClarifications.mutate(answers)
+          }
+          submittingClarifications={submitClarifications.isPending}
+          clarificationError={
+            submitClarifications.error
+              ? (submitClarifications.error as ApiError | Error).message
+              : null
+          }
         />
       </section>
 
@@ -256,6 +299,13 @@ export default function SessionDetail() {
             onStart={() => startRun.mutate()}
             starting={startRun.isPending}
             startDisabled={phase === "running"}
+            onApprovePlan={() => approvePlan.mutate()}
+            approvingPlan={approvePlan.isPending}
+            approvePlanError={
+              approvePlan.error
+                ? (approvePlan.error as ApiError | Error).message
+                : null
+            }
             report={report.data ?? null}
             reportLoading={report.isLoading || report.isFetching}
             reportError={reportEnabled ? report.error : null}
@@ -278,6 +328,13 @@ export default function SessionDetail() {
               onStart={() => startRun.mutate()}
               starting={startRun.isPending}
               startDisabled={phase === "running"}
+              onApprovePlan={() => approvePlan.mutate()}
+              approvingPlan={approvePlan.isPending}
+              approvePlanError={
+                approvePlan.error
+                  ? (approvePlan.error as ApiError | Error).message
+                  : null
+              }
               report={report.data ?? null}
               reportLoading={report.isLoading || report.isFetching}
               reportError={reportEnabled ? report.error : null}
@@ -312,12 +369,17 @@ function derivePhase(
   status: import("../lib/types").SessionStatus | undefined,
   streamPhase: RunPhase
 ): RunPhase {
-  // Terminal session states win — they're the persisted truth. While running,
-  // the SSE stream may carry more granular state, so prefer it.
+  // Terminal session states win — they're the persisted truth.
   if (status === "completed") return "completed";
   if (status === "failed") return "failed";
+
+  // Live SSE phase beats stored status while a run is in flight, except we
+  // still fall back to the stored awaiting_* status when SSE is idle (e.g. a
+  // revisit after backend restart with no event replay).
   if (streamPhase !== "idle") return streamPhase;
   if (status === "running") return "running";
+  if (status === "awaiting_clarification") return "awaiting_clarification";
+  if (status === "awaiting_plan_approval") return "awaiting_plan_approval";
   return "idle";
 }
 

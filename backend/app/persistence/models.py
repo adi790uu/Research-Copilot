@@ -58,7 +58,7 @@ class SessionORM(Base):
     company_name: Mapped[str] = mapped_column(String(200), nullable=False)
     website: Mapped[str] = mapped_column(String(2048), nullable=False)
     objective: Mapped[str] = mapped_column(Text, nullable=False)
-    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    status: Mapped[str] = mapped_column(String(40), nullable=False, default="pending")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow
     )

@@ -2,21 +2,24 @@ import type { WorkflowNode } from "../../lib/types";
 import { NODES, type NodeState, type StreamState } from "../../hooks/useWorkflowStream";
 
 const NODE_LABELS: Record<WorkflowNode, string> = {
-  planner: "Planner",
-  researcher: "Researcher",
-  extractor: "Extractor",
-  synthesizer: "Synthesizer",
-  quality_gate: "Quality gate",
-  assembler: "Assembler",
+  clarify_with_user: "Clarify",
+  write_research_brief: "Brief",
+  create_research_plan: "Plan",
+  research_supervisor: "Research",
+  final_report_generation: "Report",
 };
 
 const NODE_BLURB: Record<WorkflowNode, string> = {
-  planner: "Drafting sub-queries by report section.",
-  researcher: "Fanning out searches; deduping sources.",
-  extractor: "Pulling citation-bearing facts from each source.",
-  synthesizer: "Composing each report section in parallel.",
-  quality_gate: "Checking coverage; refining and looping if thin.",
-  assembler: "Finalising the brief with sources attached.",
+  clarify_with_user:
+    "Checking if the objective needs follow-up before research begins.",
+  write_research_brief:
+    "Structuring the goal, key entities, and source strategy.",
+  create_research_plan:
+    "Mapping subtopics to the eight report sections.",
+  research_supervisor:
+    "Dispatching parallel researchers across company-site and external sources.",
+  final_report_generation:
+    "Drafting all eight sections and polishing them section-by-section.",
 };
 
 export function WorkflowProgress({

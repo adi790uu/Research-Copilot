@@ -1,4 +1,10 @@
-export type SessionStatus = "pending" | "running" | "completed" | "failed";
+export type SessionStatus =
+  | "pending"
+  | "running"
+  | "awaiting_clarification"
+  | "awaiting_plan_approval"
+  | "completed"
+  | "failed";
 
 export interface Session {
   id: string;
@@ -70,12 +76,42 @@ export interface ChatWithMessages extends Chat {
 // ---------------------------------------------------------------------------
 
 export type WorkflowNode =
-  | "planner"
-  | "researcher"
-  | "extractor"
-  | "synthesizer"
-  | "quality_gate"
-  | "assembler";
+  | "clarify_with_user"
+  | "write_research_brief"
+  | "create_research_plan"
+  | "research_supervisor"
+  | "final_report_generation";
+
+export interface ClarificationQuestion {
+  question: string;
+  suggested_answers: string[];
+}
+
+export type ResearchSubtopicTools = "company_site" | "web" | "both";
+export type ResearchSubtopicPriority = "depth" | "breadth";
+export type ResearchReportSection =
+  | "company_overview"
+  | "products_and_services"
+  | "target_customers"
+  | "business_signals"
+  | "risks_and_challenges"
+  | "discovery_questions"
+  | "outreach_strategy"
+  | "unknowns";
+
+export interface ResearchSubtopic {
+  title: string;
+  description: string;
+  section: ResearchReportSection;
+  tools: ResearchSubtopicTools;
+  priority: ResearchSubtopicPriority;
+}
+
+export interface ResearchPlan {
+  user_message: string;
+  strategy_summary: string;
+  subtopics: ResearchSubtopic[];
+}
 
 interface BaseEvent {
   session_id: string;
@@ -102,6 +138,14 @@ export interface NodeFailedEvent extends BaseEvent {
   attempt: number;
   message: string;
 }
+export interface ClarificationRequestedEvent extends BaseEvent {
+  type: "clarification_requested";
+  questions: ClarificationQuestion[];
+}
+export interface PlanReadyEvent extends BaseEvent {
+  type: "plan_ready";
+  plan: ResearchPlan;
+}
 export interface ReportReadyEvent extends BaseEvent {
   type: "report_ready";
   report_id: string;
@@ -116,6 +160,8 @@ export type WorkflowEvent =
   | NodeStartedEvent
   | NodeCompletedEvent
   | NodeFailedEvent
+  | ClarificationRequestedEvent
+  | PlanReadyEvent
   | ReportReadyEvent
   | RunFailedEvent;
 

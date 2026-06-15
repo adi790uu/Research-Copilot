@@ -89,6 +89,11 @@ interface ApiClient {
     list: () => Promise<Session[]>;
     get: (id: string) => Promise<Session>;
     run: (id: string) => Promise<{ session_id: string; status: string }>;
+    submitClarifications: (
+      id: string,
+      answers: string[]
+    ) => Promise<{ session_id: string; status: string }>;
+    approvePlan: (id: string) => Promise<{ session_id: string; status: string }>;
     report: (id: string) => Promise<Report>;
     reportPdf: (id: string) => Promise<{ blob: Blob; filename: string }>;
     streamUrl: (id: string, token: string) => string;
@@ -123,6 +128,19 @@ function buildClient(
         fetcher<{ session_id: string; status: string }>(`/sessions/${id}/run`, {
           method: "POST",
         }),
+      submitClarifications: (id, answers) =>
+        fetcher<{ session_id: string; status: string }>(
+          `/sessions/${id}/clarifications`,
+          {
+            method: "POST",
+            body: JSON.stringify({ answers }),
+          }
+        ),
+      approvePlan: (id) =>
+        fetcher<{ session_id: string; status: string }>(
+          `/sessions/${id}/plan/approve`,
+          { method: "POST" }
+        ),
       report: (id) => fetcher<Report>(`/sessions/${id}/report`),
       reportPdf: async (id) => {
         const headers: Record<string, string> = { Accept: "application/pdf" };

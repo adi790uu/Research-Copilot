@@ -7,6 +7,8 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 class SessionStatus(str, Enum):
     PENDING = "pending"
     RUNNING = "running"
+    AWAITING_CLARIFICATION = "awaiting_clarification"
+    AWAITING_PLAN_APPROVAL = "awaiting_plan_approval"
     COMPLETED = "completed"
     FAILED = "failed"
 

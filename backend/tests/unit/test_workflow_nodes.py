@@ -1,228 +1,246 @@
+"""Unit tests for the company-research workflow nodes.
+
+Strategy: patch `app.workflow.helpers._create_model` per node so we control
+exactly what the LLM returns. The model is small and self-contained — it
+mirrors only the methods each node actually calls (with_structured_output,
+bind_tools, with_retry, ainvoke).
+"""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import pytest
-from pydantic import BaseModel
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from app.domain.report import Source
-from app.providers.llm.mock import MockLLMProvider
-from app.providers.search.base import SearchResult
-from app.providers.search.mock import MockSearchProvider
-from app.workflow.deps import WorkflowDeps
-from app.workflow.nodes.assembler import assembler
-from app.workflow.nodes.extractor import extractor
-from app.workflow.nodes.planner import planner
-from app.workflow.nodes.quality_gate import quality_gate
-from app.workflow.nodes.researcher import researcher
-from app.workflow.nodes.synthesizer import synthesizer
-from app.workflow.state import Fact, GraphState, QualityCheck, SubQuery
+from app.workflow.nodes import clarify, research_brief, research_plan
+from app.workflow.nodes.supervisor import supervisor, supervisor_tools
+from app.workflow.state import (
+    ClarificationQuestion,
+    ClarifyWithUser,
+    ResearchBrief,
+    ResearchPlan,
+    ResearchSubtopic,
+)
+
+# ----- Fake model -----------------------------------------------------------
+
+class _FakeModel:
+    """Minimal stand-in for `_create_model(...)` return value.
+
+    `responder(messages, *, mode)` returns whatever the wrapped node wants:
+      - mode="structured" => a pydantic instance
+      - mode="bound"      => an AIMessage (with optional tool_calls)
+      - mode="raw"        => an AIMessage with string content
+    """
+
+    def __init__(
+        self,
+        responder: Callable[[Any, str], Awaitable[Any] | Any] | None = None,
+        *,
+        mode: str = "raw",
+    ) -> None:
+        self._responder = responder
+        self._mode = mode
+
+    def with_structured_output(self, schema: type[Any]) -> _FakeModel:
+        clone = _FakeModel(self._responder, mode="structured")
+        clone._schema = schema  # type: ignore[attr-defined]
+        return clone
+
+    def bind_tools(self, _tools: list[Any]) -> _FakeModel:
+        return _FakeModel(self._responder, mode="bound")
+
+    def with_retry(self, **_kwargs: Any) -> _FakeModel:
+        return self
+
+    async def ainvoke(self, messages: Any, *_args: Any, **_kwargs: Any) -> Any:
+        if self._responder is None:
+            if self._mode == "raw":
+                return AIMessage(content="")
+            return None
+        result = self._responder(messages, self._mode)
+        if hasattr(result, "__await__"):
+            result = await result  # type: ignore[func-returns-value]
+        return result
 
 
-def _state(**over: Any) -> GraphState:
-    base: GraphState = {
-        "session_id": "sess_1",
-        "company_name": "Acme Corp",
-        "website": "https://acme.example.com",
-        "objective": "Evaluate as integration partner",
-        "max_attempts": 2,
-    }
-    base.update(over)  # type: ignore[typeddict-item]
-    return base
+# ----- clarify_with_user ----------------------------------------------------
 
 
-# ---------------------------------------------------------------------------
-# planner
-# ---------------------------------------------------------------------------
-
-async def test_planner_returns_subqueries_and_increments_attempt() -> None:
-    def factory(_prompt: str, schema: type[BaseModel]) -> BaseModel:
-        return schema(
-            subqueries=[
-                SubQuery(query="Acme funding rounds", section="business_signals"),
-                SubQuery(query="Acme products overview", section="products_and_services"),
-            ]
-        )
-
-    deps = WorkflowDeps(
-        llm=MockLLMProvider(structured_factory=factory),
-        search=MockSearchProvider(),
+async def test_clarify_skipped_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        clarify, "_create_model", lambda **_: _FakeModel(),
     )
-    out = await planner(_state(), deps)
-    assert len(out["subqueries"]) == 2
-    assert out["attempt"] == 1
-
-
-async def test_planner_swallows_llm_error_and_records() -> None:
-    def boom(_p: str, _s: type[BaseModel]) -> BaseModel:
-        raise RuntimeError("llm down")
-
-    deps = WorkflowDeps(llm=MockLLMProvider(structured_factory=boom), search=MockSearchProvider())
-    out = await planner(_state(), deps)
-    assert out["subqueries"] == []
-    assert out["errors"][0].node == "planner"
-    assert out["attempt"] == 1
-
-
-# ---------------------------------------------------------------------------
-# researcher
-# ---------------------------------------------------------------------------
-
-async def test_researcher_dedups_by_url() -> None:
-    shared = SearchResult(url="https://x.example/a", title="A", snippet="snip")
-    other = SearchResult(url="https://x.example/b", title="B", snippet="snip")
-
-    def responder(q: str) -> list[SearchResult]:
-        return [shared, other] if "funding" in q else [shared]
-
-    deps = WorkflowDeps(
-        llm=MockLLMProvider(),
-        search=MockSearchProvider(responder=responder),
-        search_results_per_query=5,
+    cmd = await clarify.clarify_with_user(
+        {"company_name": "Acme", "website": "https://acme.example.com", "objective": "x", "messages": []},
+        {"configurable": {"allow_clarification": False}},
     )
-    state = _state(
-        subqueries=[
-            SubQuery(query="Acme funding", section="business_signals"),
-            SubQuery(query="Acme products", section="products_and_services"),
-        ]
+    assert cmd.goto == "write_research_brief"
+
+
+async def test_clarify_routes_to_brief_when_no_clarification_needed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def responder(_messages: Any, mode: str) -> ClarifyWithUser:
+        assert mode == "structured"
+        return ClarifyWithUser(need_clarification=False, questions=[])
+
+    monkeypatch.setattr(clarify, "_create_model", lambda **_: _FakeModel(responder))
+    cmd = await clarify.clarify_with_user(
+        {"company_name": "Acme", "website": "https://acme.example.com", "objective": "x", "messages": []},
+        {"configurable": {"allow_clarification": True}},
     )
-    out = await researcher(state, deps)
-    urls = sorted(s.url for s in out["sources"])
-    assert urls == ["https://x.example/a", "https://x.example/b"]
+    assert cmd.goto == "write_research_brief"
 
 
-async def test_researcher_no_subqueries_returns_empty() -> None:
-    deps = WorkflowDeps(llm=MockLLMProvider(), search=MockSearchProvider())
-    out = await researcher(_state(subqueries=[]), deps)
-    assert out["sources"] == []
+async def test_clarify_terminates_with_question_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    questions = [ClarificationQuestion(question="Which Acme?", suggested_answers=["a", "b"])]
 
+    def responder(_messages: Any, mode: str) -> ClarifyWithUser:
+        return ClarifyWithUser(need_clarification=True, questions=questions)
 
-# ---------------------------------------------------------------------------
-# extractor
-# ---------------------------------------------------------------------------
-
-async def test_extractor_emits_facts_per_section() -> None:
-    sources = [
-        Source(id="src_aaaa", url="https://x/a", title="A", snippet="Acme raised $50M."),
-    ]
-    subqueries = [
-        SubQuery(query="Acme funding", section="business_signals"),
-        SubQuery(query="Acme customers", section="target_customers"),
-    ]
-
-    def factory(prompt: str, schema: type[BaseModel]) -> BaseModel:
-        # Return one fact per call, mentioning the section name so we can verify.
-        section = "business_signals" if "business_signals" in prompt else "target_customers"
-        return schema(facts=[f"Fact for {section}"])
-
-    deps = WorkflowDeps(
-        llm=MockLLMProvider(structured_factory=factory),
-        search=MockSearchProvider(),
+    monkeypatch.setattr(clarify, "_create_model", lambda **_: _FakeModel(responder))
+    cmd = await clarify.clarify_with_user(
+        {"company_name": "Acme", "website": "https://acme.example.com", "objective": "x", "messages": []},
+        {"configurable": {"allow_clarification": True}},
     )
-    out = await extractor(_state(sources=sources, subqueries=subqueries), deps)
-    sections = {f.section for f in out["facts"]}
-    assert sections == {"business_signals", "target_customers"}
-    assert all(f.source_id == "src_aaaa" for f in out["facts"])
+    from langgraph.graph import END
+
+    assert cmd.goto == END
+    payload = json.loads(cmd.update["messages"][0].content)
+    assert payload["type"] == "clarification"
+    assert payload["questions"][0]["question"] == "Which Acme?"
 
 
-# ---------------------------------------------------------------------------
-# synthesizer
-# ---------------------------------------------------------------------------
+# ----- write_research_brief -------------------------------------------------
 
-async def test_synthesizer_builds_report_with_all_sections() -> None:
-    facts = [
-        Fact(text="Acme makes widgets.", source_id="src_aaa", section="company_overview"),
-        Fact(text="Acme has global ops.", source_id="src_aaa", section="company_overview"),
-        Fact(text="Acme sells SaaS.", source_id="src_aaa", section="products_and_services"),
-        Fact(text="Acme has SMB customers.", source_id="src_bbb", section="target_customers"),
-        Fact(text="Acme raised Series B.", source_id="src_bbb", section="business_signals"),
-    ]
-    sources = [
-        Source(id="src_aaa", url="https://x/1", title="One", snippet="..."),
-        Source(id="src_bbb", url="https://x/2", title="Two", snippet="..."),
-    ]
-    text_responses = [f"draft body {i}" for i in range(100)]  # plenty
-    deps = WorkflowDeps(
-        llm=MockLLMProvider(text_responses=text_responses),
-        search=MockSearchProvider(),
+
+async def test_research_brief_emits_supervisor_seed(monkeypatch: pytest.MonkeyPatch) -> None:
+    brief = ResearchBrief(
+        research_goal="Evaluate Acme as a partner.",
+        key_entities=["Acme"],
+        constraints=[],
+        source_strategy="company_site_first",
     )
-    out = await synthesizer(_state(facts=facts, sources=sources), deps)
-    report = out["report"]
-    assert report is not None
-    assert report.company_overview.content.startswith("draft body")
-    assert "src_aaa" in report.company_overview.source_ids
-    assert report.sources == sources
-    assert out["sections_drafted"] is True
 
+    def responder(_messages: Any, _mode: str) -> ResearchBrief:
+        return brief
 
-# ---------------------------------------------------------------------------
-# quality gate
-# ---------------------------------------------------------------------------
-
-async def test_quality_gate_passes_when_all_critical_have_facts() -> None:
-    facts = [
-        Fact(text="f", source_id="s", section=sec)
-        for sec in ("company_overview", "products_and_services", "target_customers", "business_signals")
-        for _ in range(2)
-    ]
-    deps = WorkflowDeps(llm=MockLLMProvider(), search=MockSearchProvider())
-    out = await quality_gate(_state(facts=facts, attempt=1), deps)
-    assert out["quality"].passed is True
-
-
-async def test_quality_gate_forces_pass_at_max_attempts() -> None:
-    deps = WorkflowDeps(llm=MockLLMProvider(), search=MockSearchProvider())
-    # No facts, but attempt == max_attempts so we accept anyway.
-    out = await quality_gate(_state(facts=[], attempt=2, max_attempts=2), deps)
-    assert out["quality"].passed is True
-    assert "max attempts" in out["quality"].reasoning.lower()
-
-
-async def test_quality_gate_emits_refined_subqueries_on_thin_draft() -> None:
-    refined = [SubQuery(query="Sharper Acme funding", section="business_signals")]
-
-    def factory(_p: str, schema: type[BaseModel]) -> BaseModel:
-        return schema(
-            passed=False,
-            reasoning="thin",
-            missing_sections=["business_signals"],
-            refined_subqueries=refined,
-        )
-
-    deps = WorkflowDeps(
-        llm=MockLLMProvider(structured_factory=factory),
-        search=MockSearchProvider(),
+    monkeypatch.setattr(
+        research_brief, "_create_model", lambda **_: _FakeModel(responder)
     )
-    out = await quality_gate(_state(facts=[], attempt=1, max_attempts=2), deps)
-    assert out["quality"].passed is False
-    assert out["subqueries"] == refined
-    assert out["attempt"] == 2
 
-
-# ---------------------------------------------------------------------------
-# assembler
-# ---------------------------------------------------------------------------
-
-async def test_assembler_refreshes_sources_on_report() -> None:
-    from app.domain.report import ReportContent, ReportSection
-
-    blank = ReportSection(content="", source_ids=[])
-    report = ReportContent(
-        company_overview=blank,
-        products_and_services=blank,
-        target_customers=blank,
-        business_signals=blank,
-        risks_and_challenges=blank,
-        discovery_questions=blank,
-        outreach_strategy=blank,
-        unknowns=blank,
-        sources=[],
+    cmd = await research_brief.write_research_brief(
+        {
+            "company_name": "Acme",
+            "website": "https://acme.example.com",
+            "objective": "Eval",
+            "messages": [HumanMessage(content="seed")],
+        },
+        {},
     )
-    new_sources = [Source(id="src_a", url="https://x/1", title="t", snippet="s")]
-    deps = WorkflowDeps(llm=MockLLMProvider(), search=MockSearchProvider())
-    out = await assembler(_state(report=report, sources=new_sources), deps)
-    assert out["report"].sources == new_sources
+    assert cmd.goto == "create_research_plan"
+    assert "Acme" in cmd.update["research_brief"]
+    supervisor_seed = cmd.update["supervisor_messages"]
+    assert supervisor_seed["type"] == "override"
+    # System message + brief HumanMessage.
+    assert len(supervisor_seed["value"]) == 2
 
 
-async def test_assembler_noop_without_report() -> None:
-    deps = WorkflowDeps(llm=MockLLMProvider(), search=MockSearchProvider())
-    out = await assembler(_state(), deps)
-    assert out == {}
+# ----- create_research_plan -------------------------------------------------
+
+
+async def test_research_plan_emits_plan_ready_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = ResearchPlan(
+        user_message="I'll research Acme overview and signals.",
+        strategy_summary="Start with company site, then external news.",
+        subtopics=[
+            ResearchSubtopic(
+                title="Overview",
+                description="Who they are.",
+                section="company_overview",
+                tools="company_site",
+                priority="depth",
+            ),
+            ResearchSubtopic(
+                title="Funding",
+                description="Recent rounds.",
+                section="business_signals",
+                tools="web",
+                priority="depth",
+            ),
+        ],
+    )
+
+    monkeypatch.setattr(
+        research_plan, "_create_model", lambda **_: _FakeModel(lambda *_: plan)
+    )
+
+    result = await research_plan.create_research_plan(
+        {"company_name": "Acme", "website": "https://acme.example.com", "research_brief": "brief"},
+        {},
+    )
+    # research_plan is stored as a plain dict (not the Pydantic model) so the
+    # langgraph checkpointer doesn't have to round-trip an app-defined type.
+    assert isinstance(result["research_plan"], dict)
+    assert result["research_plan"]["subtopics"][0]["section"] == "company_overview"
+    assert result["messages"][0].additional_kwargs.get("plan_ready") is True
+
+
+# ----- supervisor / supervisor_tools ----------------------------------------
+
+
+async def test_supervisor_tools_routes_to_end_on_research_complete() -> None:
+    ai = AIMessage(
+        content="",
+        tool_calls=[
+            {"id": "tc1", "name": "ResearchComplete", "args": {}},
+        ],
+    )
+    state = {"supervisor_messages": [ai], "research_iterations": 0, "research_brief": "b"}
+    cmd = await supervisor_tools(state, {})
+    from langgraph.graph import END
+
+    assert cmd.goto == END
+
+
+async def test_supervisor_tools_records_think_reflection() -> None:
+    ai = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "id": "tc_think",
+                "name": "think_tool",
+                "args": {"reflection": "need more on funding"},
+            },
+        ],
+    )
+    state = {"supervisor_messages": [ai], "research_iterations": 0}
+    cmd = await supervisor_tools(state, {})
+    out = cmd.update["supervisor_messages"]
+    assert any(isinstance(m, ToolMessage) and "need more on funding" in m.content for m in out)
+    assert cmd.goto == "supervisor"
+
+
+async def test_supervisor_invokes_chat_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    ai_response = AIMessage(content="", tool_calls=[])
+
+    def responder(_messages: Any, mode: str) -> Any:
+        assert mode == "bound"
+        return ai_response
+
+    from app.workflow.nodes import supervisor as supervisor_mod
+
+    monkeypatch.setattr(supervisor_mod, "_create_model", lambda **_: _FakeModel(responder))
+
+    state = {"supervisor_messages": [HumanMessage(content="x")], "research_iterations": 0}
+    cmd = await supervisor(state, {})
+    assert cmd.goto == "supervisor_tools"
+    assert cmd.update["research_iterations"] == 1

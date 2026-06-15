@@ -30,6 +30,10 @@ docker compose up postgres -d
 cd backend
 uv sync
 cp .env.example .env   # fill in OPENAI_API_KEY, TAVILY_API_KEY
+
+# Apply database schema (Alembic owns DDL — startup no longer touches it)
+uv run alembic upgrade head
+
 uv run uvicorn app.main:app --reload
 
 # Frontend (separate terminal)
@@ -48,6 +52,36 @@ backend/    FastAPI + LangGraph workflow + persistence
 frontend/   React app
 docs/       architecture.md, engineering-decisions.md, product-improvements.md
 ```
+
+## Database migrations
+
+Schema is managed exclusively by Alembic — the runtime never runs DDL.
+
+```bash
+cd backend
+
+# Apply pending migrations
+uv run alembic upgrade head
+
+# Create a new migration after changing app/persistence/models.py
+uv run alembic revision --autogenerate -m "describe the change"
+
+# Inspect history / current revision
+uv run alembic history
+uv run alembic current
+```
+
+Need a clean slate (e.g. after upgrading from a pre-Alembic build)? Drop the
+app tables and re-run `upgrade head`:
+
+```bash
+psql "$DATABASE_URL" -c "DROP TABLE IF EXISTS messages, chats, reports, sessions, users, alembic_version CASCADE;"
+uv run alembic upgrade head
+```
+
+LangGraph's `checkpoints*` tables are managed by `AsyncPostgresSaver.setup()`
+and live outside the Alembic-tracked schema — don't drop them unless you also
+want to wipe in-flight runs.
 
 ## PDF export — native dependencies
 

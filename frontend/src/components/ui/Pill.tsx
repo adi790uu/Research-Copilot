@@ -40,10 +40,24 @@ export function statusTone(status: SessionStatus): Tone {
       return "neutral";
     case "running":
       return "info";
+    case "awaiting_clarification":
+    case "awaiting_plan_approval":
+      return "warn";
     case "completed":
       return "good";
     case "failed":
       return "bad";
+  }
+}
+
+export function statusLabel(status: SessionStatus): string {
+  switch (status) {
+    case "awaiting_clarification":
+      return "awaiting clarification";
+    case "awaiting_plan_approval":
+      return "awaiting plan approval";
+    default:
+      return status;
   }
 }
 
