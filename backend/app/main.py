@@ -10,6 +10,7 @@ from app.api import chats, health, sessions, users
 from app.core.config import get_settings
 from app.core.errors import register_error_handlers
 from app.core.logging import configure_logging, get_logger
+from app.persistence.checkpointer import checkpointer_lifespan
 from app.persistence.db import dispose_db, init_db
 
 
@@ -21,11 +22,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     log.info("startup", env="dev")
     await init_db()
     log.info("db_ready")
-    try:
-        yield
-    finally:
-        await dispose_db()
-        log.info("shutdown")
+    async with checkpointer_lifespan() as saver:
+        app.state.checkpointer = saver
+        log.info("checkpointer_ready")
+        try:
+            yield
+        finally:
+            await dispose_db()
+            log.info("shutdown")
 
 
 def create_app() -> FastAPI:
