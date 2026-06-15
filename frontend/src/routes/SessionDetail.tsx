@@ -7,7 +7,7 @@ import { formatLongDate, formatTime, shortId } from "../lib/format";
 import type { Session } from "../lib/types";
 import { Status, statusTone } from "../components/ui/Pill";
 import { SectionHeading } from "../components/ui/SectionHeading";
-import { ReportView } from "../components/session/ReportView";
+import { ReportSkeleton, ReportView } from "../components/session/ReportView";
 import { WorkflowProgress } from "../components/session/WorkflowProgress";
 import { useWorkflowStream } from "../hooks/useWorkflowStream";
 
@@ -95,8 +95,8 @@ export default function SessionDetail() {
         <div className="mt-6">
           {report.data ? (
             <ReportView report={report.data} />
-          ) : report.isLoading ? (
-            <SkeletonBlock />
+          ) : stream.phase === "running" || report.isLoading ? (
+            <ReportSkeleton />
           ) : (
             <BriefingPlaceholder />
           )}
@@ -181,17 +181,6 @@ function SkeletonHeader() {
       <div className="h-10 w-2/3 bg-ink/15 rounded-sm" />
       <div className="h-5 w-4/5 bg-ink/10 rounded-sm" />
       <div className="h-3 w-1/2 bg-ink/5 rounded-sm" />
-    </div>
-  );
-}
-
-function SkeletonBlock() {
-  return (
-    <div className="space-y-3 animate-pulse" aria-busy>
-      <div className="h-4 w-1/3 bg-ink/10 rounded-sm" />
-      <div className="h-3 w-full bg-ink/5 rounded-sm" />
-      <div className="h-3 w-5/6 bg-ink/5 rounded-sm" />
-      <div className="h-3 w-3/4 bg-ink/5 rounded-sm" />
     </div>
   );
 }
