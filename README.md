@@ -49,6 +49,29 @@ frontend/   React app
 docs/       architecture.md, engineering-decisions.md, product-improvements.md
 ```
 
+## PDF export — native dependencies
+
+The "Export PDF" action renders the brief with [WeasyPrint](https://weasyprint.org/),
+which wraps Pango / Cairo / HarfBuzz / fontconfig via ctypes. Those need to be
+present at runtime.
+
+- **macOS**: `brew install pango cairo libffi`. The backend automatically
+  patches `ctypes.util.find_library` to look in `/opt/homebrew/lib` (or
+  `/usr/local/lib` on Intel Macs), so no `DYLD_*` env var is needed.
+- **Linux (Debian / Ubuntu)**: `apt-get install libpango-1.0-0 libpangoft2-1.0-0
+  libharfbuzz0b libffi8 fontconfig fonts-dejavu`. Once installed in standard
+  paths, `ldconfig` handles the lookup — no special config required.
+- **Docker**: add the apt line above to the backend image. Example:
+  ```dockerfile
+  RUN apt-get update && apt-get install -y --no-install-recommends \
+      libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz0b libffi8 \
+      fontconfig fonts-dejavu \
+      && rm -rf /var/lib/apt/lists/*
+  ```
+
+If the native libs can't be loaded the rest of the app still boots; the PDF
+endpoint just returns a `503 pdf_renderer_unavailable` with a clear hint.
+
 ## Status
 
 Phase 0 — foundation scaffolding.

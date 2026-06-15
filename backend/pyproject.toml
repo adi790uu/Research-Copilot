@@ -21,6 +21,7 @@ dependencies = [
     "langchain-core>=0.3",
     "tavily-python>=0.5",
     "clerk-backend-api>=1.0",
+    "weasyprint>=63.0",
 ]
 
 [dependency-groups]

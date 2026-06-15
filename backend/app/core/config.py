@@ -13,6 +13,7 @@ class Settings(BaseSettings):
 
     openai_api_key: str = Field(default="")
     openai_model: str = Field(default="gpt-4o-mini")
+    openai_base_url: str = Field(default="")
     tavily_api_key: str = Field(default="")
 
     # Auth (Clerk). Without these set, every protected endpoint returns 401.

@@ -9,12 +9,18 @@ T = TypeVar("T", bound=BaseModel)
 
 
 class OpenAIProvider:
-    def __init__(self, api_key: str, model: str) -> None:
+    def __init__(self, api_key: str, model: str, base_url: str | None = None) -> None:
         self._api_key = api_key
         self._model = model
+        self._base_url = base_url or None
 
     def _client(self, temperature: float) -> ChatOpenAI:
-        return ChatOpenAI(api_key=self._api_key, model=self._model, temperature=temperature)
+        return ChatOpenAI(
+            api_key=self._api_key,
+            model=self._model,
+            temperature=temperature,
+            base_url=self._base_url,
+        )
 
     async def complete(self, prompt: str, *, temperature: float = 0.2) -> str:
         result = await self._client(temperature).ainvoke([HumanMessage(content=prompt)])

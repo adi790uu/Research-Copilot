@@ -62,7 +62,11 @@ def build_providers(
 ) -> tuple[LLMProvider, SearchProvider]:
     if settings.openai_api_key and settings.tavily_api_key:
         return (
-            OpenAIProvider(settings.openai_api_key, settings.openai_model),
+            OpenAIProvider(
+                settings.openai_api_key,
+                settings.openai_model,
+                base_url=settings.openai_base_url or None,
+            ),
             TavilySearchProvider(settings.tavily_api_key),
         )
     return _mock_providers(company_hint)

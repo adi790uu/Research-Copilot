@@ -90,6 +90,7 @@ interface ApiClient {
     get: (id: string) => Promise<Session>;
     run: (id: string) => Promise<{ session_id: string; status: string }>;
     report: (id: string) => Promise<Report>;
+    reportPdf: (id: string) => Promise<{ blob: Blob; filename: string }>;
     streamUrl: (id: string, token: string) => string;
   };
   chats: {
@@ -100,7 +101,10 @@ interface ApiClient {
   };
 }
 
-function buildClient(fetcher: Fetcher): ApiClient {
+function buildClient(
+  fetcher: Fetcher,
+  getToken: (() => Promise<string | null>) | null
+): ApiClient {
   return {
     health: () => fetcher<Health>("/health"),
     me: {
@@ -120,6 +124,34 @@ function buildClient(fetcher: Fetcher): ApiClient {
           method: "POST",
         }),
       report: (id) => fetcher<Report>(`/sessions/${id}/report`),
+      reportPdf: async (id) => {
+        const headers: Record<string, string> = { Accept: "application/pdf" };
+        if (getToken) {
+          const token = await getToken();
+          if (token) headers.Authorization = `Bearer ${token}`;
+        }
+        const res = await fetch(`${BASE_URL}/sessions/${id}/report.pdf`, {
+          method: "GET",
+          headers,
+        });
+        if (!res.ok) {
+          let message = `PDF export failed (${res.status})`;
+          try {
+            const body = (await res.json()) as {
+              error?: { message?: string };
+            };
+            if (body.error?.message) message = body.error.message;
+          } catch {
+            // ignore — fall back to status
+          }
+          throw new ApiError(res.status, "pdf_error", message);
+        }
+        const disposition = res.headers.get("Content-Disposition") ?? "";
+        const match = disposition.match(/filename="?([^"]+)"?/i);
+        const filename = match?.[1] ?? `brief-${id.slice(0, 6)}.pdf`;
+        const blob = await res.blob();
+        return { blob, filename };
+      },
       streamUrl: (id, token) =>
         `${BASE_URL}/sessions/${id}/stream?token=${encodeURIComponent(token)}`,
     },
@@ -146,11 +178,14 @@ function buildClient(fetcher: Fetcher): ApiClient {
  */
 export function useApi(): ApiClient {
   const { getToken } = useAuth();
-  return useMemo(() => buildClient(buildFetcher(getToken)), [getToken]);
+  return useMemo(
+    () => buildClient(buildFetcher(getToken), getToken),
+    [getToken]
+  );
 }
 
 /**
  * Public API client (no auth). Use for /health on the landing page or anywhere
  * the user isn't signed in.
  */
-export const publicApi: ApiClient = buildClient(buildFetcher(null));
+export const publicApi: ApiClient = buildClient(buildFetcher(null), null);

@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useChatStream } from "../../hooks/useChatStream";
-import type { ChatWithMessages, Source } from "../../lib/types";
+import type { RunPhase, StreamState } from "../../hooks/useWorkflowStream";
+import type { ChatWithMessages, Report, Source, WorkflowNode } from "../../lib/types";
+import { formatRelative } from "../../lib/format";
 import { SourceCitation } from "./SourceCitation";
 
 const PROMPTS = [
@@ -10,13 +12,47 @@ const PROMPTS = [
   "Who else should be on the email?",
 ];
 
+const RUNNING_NODE_LABEL: Record<WorkflowNode, string> = {
+  planner: "Drafting the research plan",
+  researcher: "Searching across sources",
+  extractor: "Pulling citation-bearing facts",
+  synthesizer: "Composing the briefing",
+  quality_gate: "Reviewing coverage",
+  assembler: "Finalising the brief",
+};
+
 interface Props {
-  chat: ChatWithMessages;
+  chat: ChatWithMessages | null;
+  companyName: string;
   sources: Source[];
+  report: Report | null;
+  stream: StreamState;
+  /** Effective phase = max(session.status, stream.phase). Treats a completed
+   * session as completed even when the event bus replay is empty (revisit
+   * after backend restart). */
+  phase: RunPhase;
+  onStart: () => void;
+  starting: boolean;
+  canStart: boolean;
+  onOpenReport: () => void;
 }
 
-export function ChatPanel({ chat, sources }: Props) {
-  const { messages, streaming, error, sendMessage } = useChatStream(chat.id, chat.messages);
+export function ChatPanel({
+  chat,
+  companyName,
+  sources,
+  report,
+  stream,
+  phase,
+  onStart,
+  starting,
+  canStart,
+  onOpenReport,
+}: Props) {
+  const { messages, streaming, error, sendMessage } = useChatStream(
+    chat?.id ?? null,
+    chat?.messages ?? []
+  );
   const [draft, setDraft] = useState("");
   const scrollerRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
@@ -29,69 +65,86 @@ export function ChatPanel({ chat, sources }: Props) {
     return m;
   }, [sources]);
 
-  // Sticky-bottom auto-scroll: only follow new tokens if the user is already
-  // pinned to the bottom. If they scrolled up to read history, leave them be.
   useEffect(() => {
     const el = scrollerRef.current;
     if (!el || !stickToBottomRef.current) return;
     el.scrollTop = el.scrollHeight;
-  }, [messages]);
+  }, [messages, phase]);
 
   const onScroll = () => {
     const el = scrollerRef.current;
     if (!el) return;
-    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    stickToBottomRef.current = distanceFromBottom < 80;
+    stickToBottomRef.current =
+      el.scrollHeight - el.scrollTop - el.clientHeight < 80;
   };
 
-  const onSubmit = async (e: React.FormEvent) => {
+  const composerDisabled =
+    streaming || phase !== "completed" || chat == null;
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (composerDisabled) return;
     const content = draft;
     setDraft("");
     await sendMessage(content);
   };
 
-  const onSuggest = async (prompt: string) => {
-    if (streaming) return;
+  const handleSuggest = async (prompt: string) => {
+    if (composerDisabled) return;
     setDraft("");
     await sendMessage(prompt);
   };
 
-  const showEmptyState = messages.length === 0 && !streaming;
-
   return (
-    <div className="surface rounded-sm overflow-hidden flex flex-col" style={{ minHeight: "28rem" }}>
+    <div className="flex flex-col h-full">
       <div
         ref={scrollerRef}
         onScroll={onScroll}
-        className="flex-1 overflow-y-auto px-4 sm:px-6 md:px-8 py-6 space-y-5"
-        style={{ maxHeight: "32rem" }}
+        className="flex-1 overflow-y-auto"
       >
-        {showEmptyState ? (
-          <EmptyState onPick={onSuggest} />
-        ) : (
-          messages.map((m) => (
-            <MessageRow
-              key={m.id}
-              role={m.role}
-              content={m.content}
-              streaming={m.streaming === true && m.role === "assistant"}
-              sourceById={sourceById}
-            />
-          ))
-        )}
+        <div className="mx-auto w-full max-w-3xl px-5 sm:px-8 py-8 space-y-7">
+          <StatusBlock
+            companyName={companyName}
+            phase={phase}
+            stream={stream}
+            report={report}
+            starting={starting}
+            canStart={canStart}
+            onStart={onStart}
+            onOpenReport={onOpenReport}
+          />
 
-        {error && (
-          <p className="font-mono text-[0.6875rem] uppercase tracking-wider text-bad">
-            {error}
-          </p>
-        )}
+          {messages.length > 0 && (
+            <div className="space-y-6">
+              {messages.map((m) => (
+                <MessageRow
+                  key={m.id}
+                  role={m.role}
+                  content={m.content}
+                  streaming={m.streaming === true && m.role === "assistant"}
+                  sourceById={sourceById}
+                />
+              ))}
+            </div>
+          )}
+
+          {phase === "completed" && messages.length === 0 && (
+            <SuggestionList onPick={handleSuggest} disabled={composerDisabled} />
+          )}
+
+          {error && (
+            <p className="font-mono text-[0.6875rem] uppercase tracking-wider text-bad">
+              {error}
+            </p>
+          )}
+        </div>
       </div>
 
       <form
-        onSubmit={onSubmit}
-        className="border-t border-rule/10 px-4 sm:px-6 md:px-8 py-4"
+        onSubmit={handleSubmit}
+        className="border-t border-rule/10 bg-bg/60 backdrop-blur"
       >
+        <div className="mx-auto w-full max-w-3xl px-5 sm:px-8 py-4">
         <div className="flex items-end gap-3">
           <label htmlFor="chat-input" className="sr-only">
             Ask the briefing
@@ -104,20 +157,20 @@ export function ChatPanel({ chat, sources }: Props) {
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
-                if (!streaming && draft.trim()) {
-                  void onSubmit(e as unknown as React.FormEvent);
+                if (!composerDisabled && draft.trim()) {
+                  void handleSubmit(e as unknown as React.FormEvent);
                 }
               }
             }}
-            placeholder="Ask the brief — sources, signals, talking points…"
+            placeholder={composerPlaceholder(phase)}
             className="input flex-1 resize-none py-2"
             style={{ maxHeight: "8rem" }}
-            disabled={streaming}
+            disabled={composerDisabled}
           />
           <button
             type="submit"
             className="btn-primary"
-            disabled={streaming || !draft.trim()}
+            disabled={composerDisabled || !draft.trim()}
             aria-label="Send message"
           >
             <span className="hidden sm:inline">
@@ -130,10 +183,243 @@ export function ChatPanel({ chat, sources }: Props) {
           <kbd className="not-italic">↵</kbd> to send ·{" "}
           <kbd className="not-italic">⇧ ↵</kbd> for newline
         </p>
+        </div>
       </form>
     </div>
   );
 }
+
+function composerPlaceholder(phase: RunPhase): string {
+  switch (phase) {
+    case "idle":
+      return "Start the research above to begin the conversation.";
+    case "running":
+      return "Researching… you can chat once the brief is ready.";
+    case "failed":
+      return "Run halted. Restart the research to chat.";
+    case "completed":
+      return "Ask the brief — sources, signals, talking points…";
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Top of the chat: status block. Adapts to workflow phase.
+// ---------------------------------------------------------------------------
+
+interface StatusBlockProps {
+  companyName: string;
+  phase: RunPhase;
+  stream: StreamState;
+  report: Report | null;
+  starting: boolean;
+  canStart: boolean;
+  onStart: () => void;
+  onOpenReport: () => void;
+}
+
+function StatusBlock({
+  companyName,
+  phase,
+  stream,
+  report,
+  starting,
+  canStart,
+  onStart,
+  onOpenReport,
+}: StatusBlockProps) {
+  if (phase === "idle") {
+    return (
+      <IntroCard label="Ready to begin">
+        <h2
+          className="font-display italic text-[1.6rem] sm:text-[1.85rem] text-ink leading-tight"
+          style={{ fontVariationSettings: '"opsz" 144, "SOFT" 100, "WONK" 1' }}
+        >
+          A briefing on {companyName}, in a few minutes.
+        </h2>
+        <p className="mt-3 text-sm text-ink-soft leading-relaxed max-w-prose">
+          A LangGraph workflow plans, researches, synthesises, and reviews — then
+          the chat opens. Everything that follows is grounded in the briefing.
+        </p>
+        <div className="mt-5 flex items-center gap-3">
+          <button
+            type="button"
+            onClick={onStart}
+            disabled={!canStart || starting}
+            className="btn-primary"
+          >
+            {starting ? "Dispatching…" : "Start research"}
+            <span aria-hidden className="arrow">→</span>
+          </button>
+          <span className="font-mono text-[0.625rem] uppercase tracking-wider text-ink-faint">
+            ~2 min · 6 nodes
+          </span>
+        </div>
+      </IntroCard>
+    );
+  }
+
+  if (phase === "running") {
+    return <RunningCard stream={stream} />;
+  }
+
+  if (phase === "failed") {
+    return (
+      <IntroCard label="Run halted" tone="bad">
+        <h2
+          className="font-display italic text-2xl text-ink leading-tight"
+          style={{ fontVariationSettings: '"opsz" 144, "SOFT" 100, "WONK" 1' }}
+        >
+          The research couldn't complete.
+        </h2>
+        <p className="mt-3 text-sm text-ink-soft leading-relaxed max-w-prose">
+          {stream.error ?? "An unexpected error stopped the workflow."}
+        </p>
+        <div className="mt-5">
+          <button
+            type="button"
+            onClick={onStart}
+            disabled={!canStart || starting}
+            className="btn-primary"
+          >
+            {starting ? "Retrying…" : "Retry research"}
+            <span aria-hidden className="arrow">→</span>
+          </button>
+        </div>
+      </IntroCard>
+    );
+  }
+
+  // completed
+  return (
+    <div className="flex flex-col gap-2.5">
+      <span className="eyebrow">Assistant</span>
+      <p className="text-[0.95rem] text-ink leading-relaxed max-w-prose">
+        I've completed your research on{" "}
+        <span className="text-ink">{companyName}</span>. Feel free to ask
+        follow-up questions or request changes.
+      </p>
+      <CompletionCard
+        companyName={companyName}
+        createdAt={report?.created_at}
+        onOpen={onOpenReport}
+      />
+    </div>
+  );
+}
+
+function IntroCard({
+  label,
+  tone,
+  children,
+}: {
+  label: string;
+  tone?: "bad";
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      className={`relative overflow-hidden rounded-sm border ${
+        tone === "bad"
+          ? "border-bad/30 bg-bad/5"
+          : "border-rule/10 bg-bg-elev/40"
+      } px-6 sm:px-8 py-7`}
+    >
+      <p className="eyebrow">{label}</p>
+      <div className="mt-3">{children}</div>
+    </div>
+  );
+}
+
+function RunningCard({ stream }: { stream: StreamState }) {
+  // Find the active or most recently completed node label.
+  const activeNode = findActiveNode(stream);
+  const label = activeNode ? RUNNING_NODE_LABEL[activeNode] : "Dispatching the workflow";
+  return (
+    <div className="relative overflow-hidden rounded-sm border border-rule/10 bg-bg-elev/40 px-6 sm:px-8 py-6">
+      <div className="flex items-center gap-3">
+        <span
+          aria-hidden
+          className="h-2 w-2 rounded-full bg-info animate-pulse-dot"
+        />
+        <p className="eyebrow text-info">Researching</p>
+      </div>
+      <p
+        className="mt-3 font-display italic text-xl sm:text-2xl text-ink leading-tight"
+        style={{ fontVariationSettings: '"opsz" 144, "SOFT" 100, "WONK" 1' }}
+      >
+        {label}…
+      </p>
+      <p className="mt-2 text-sm text-ink-soft">
+        Watch the live progress in the Plan tab on the right.
+      </p>
+    </div>
+  );
+}
+
+function findActiveNode(stream: StreamState): WorkflowNode | null {
+  const NODES: WorkflowNode[] = [
+    "planner",
+    "researcher",
+    "extractor",
+    "synthesizer",
+    "quality_gate",
+    "assembler",
+  ];
+  // Prefer currently running; else last completed.
+  const running = NODES.find((n) => stream.nodes[n]?.phase === "running");
+  if (running) return running;
+  for (let i = NODES.length - 1; i >= 0; i--) {
+    if (stream.nodes[NODES[i]]?.phase === "completed") return NODES[i];
+  }
+  return null;
+}
+
+function CompletionCard({
+  companyName,
+  createdAt,
+  onOpen,
+}: {
+  companyName: string;
+  createdAt?: string;
+  onOpen: () => void;
+}) {
+  return (
+    <div className="mt-2 relative overflow-hidden rounded-lg bg-surface/70 hover:bg-surface transition-colors">
+      <button
+        type="button"
+        onClick={onOpen}
+        className="w-full grid grid-cols-[auto_1fr_auto] items-center gap-4 px-5 py-4 text-left"
+      >
+        <span
+          aria-hidden
+          className="h-9 w-9 rounded-md bg-bg-elev/70 flex items-center justify-center text-accent"
+          style={{ fontVariationSettings: '"opsz" 144, "SOFT" 100, "WONK" 1' }}
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
+            <path d="M3.5 2h6l3 3v9a.5.5 0 0 1-.5.5h-8.5a.5.5 0 0 1-.5-.5V2.5a.5.5 0 0 1 .5-.5z" strokeLinejoin="round" />
+            <path d="M9.5 2v3.5h3M5 8h6M5 10.5h6M5 13h4" strokeLinecap="round" />
+          </svg>
+        </span>
+        <span className="min-w-0">
+          <span className="block text-sm text-ink leading-snug">
+            Brief — {companyName}
+          </span>
+          <span className="block mt-0.5 font-mono text-[0.6875rem] uppercase tracking-wider text-ink-faint">
+            {createdAt ? formatRelative(createdAt) : "Ready"} · Nine sections
+          </span>
+        </span>
+        <span className="inline-flex items-center gap-1.5 font-mono text-[0.6875rem] uppercase tracking-wider text-ink-soft">
+          Open
+          <span aria-hidden>→</span>
+        </span>
+      </button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Messages + citations
+// ---------------------------------------------------------------------------
 
 interface MessageRowProps {
   role: "user" | "assistant";
@@ -146,8 +432,10 @@ function MessageRow({ role, content, streaming, sourceById }: MessageRowProps) {
   if (role === "user") {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[85%] bg-surface px-4 py-3 rounded-sm border border-rule/10">
-          <p className="text-sm text-ink whitespace-pre-wrap leading-relaxed">{content}</p>
+        <div className="max-w-[82%] bg-surface px-4 py-2.5 rounded-2xl rounded-br-md shadow-[0_1px_0_rgb(0_0_0_/_0.15)]">
+          <p className="text-[0.9375rem] text-ink whitespace-pre-wrap leading-relaxed">
+            {content}
+          </p>
         </div>
       </div>
     );
@@ -156,7 +444,7 @@ function MessageRow({ role, content, streaming, sourceById }: MessageRowProps) {
   return (
     <div className="flex flex-col gap-1.5">
       <span className="eyebrow">Assistant</span>
-      <div className="text-[0.9375rem] text-ink leading-relaxed whitespace-pre-wrap">
+      <div className="text-[0.9375rem] text-ink leading-relaxed whitespace-pre-wrap max-w-prose">
         <RenderWithCitations text={content} sourceById={sourceById} />
         {streaming && <StreamingCursor />}
       </div>
@@ -207,27 +495,26 @@ function StreamingCursor() {
   );
 }
 
-function EmptyState({ onPick }: { onPick: (q: string) => void }) {
+function SuggestionList({
+  onPick,
+  disabled,
+}: {
+  onPick: (q: string) => void;
+  disabled: boolean;
+}) {
   return (
-    <div className="py-6">
-      <p className="eyebrow">Conversation open</p>
-      <h3
-        className="mt-3 font-display italic text-2xl text-ink"
-        style={{ fontVariationSettings: '"opsz" 144, "SOFT" 100, "WONK" 1' }}
-      >
-        Ask the brief anything.
-      </h3>
-      <p className="mt-3 text-sm text-ink-soft leading-relaxed max-w-prose">
-        Answers stay grounded in the report and its sources. Try one of these to
-        start, or write your own.
+    <div className="pt-1">
+      <p className="font-mono text-[0.625rem] uppercase tracking-wider text-ink-faint mb-3">
+        Try asking
       </p>
-      <div className="mt-5 flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-2">
         {PROMPTS.map((p) => (
           <button
             key={p}
             type="button"
+            disabled={disabled}
             onClick={() => onPick(p)}
-            className="btn-ghost text-xs"
+            className="btn-ghost text-xs disabled:opacity-50"
           >
             {p}
           </button>

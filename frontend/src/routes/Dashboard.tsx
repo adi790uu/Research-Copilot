@@ -1,7 +1,6 @@
 import { useUser } from "@clerk/clerk-react";
 
 import { SessionForm } from "../components/session/SessionForm";
-import { SessionList } from "../components/session/SessionList";
 import { SectionHeading } from "../components/ui/SectionHeading";
 
 export default function Dashboard() {
@@ -9,14 +8,14 @@ export default function Dashboard() {
   const firstName = user?.firstName ?? user?.username ?? null;
 
   return (
-    <div className="mx-auto max-w-3xl px-6 md:px-10 pt-10 md:pt-14 pb-24 stagger">
+    <div className="mx-auto max-w-2xl px-6 md:px-10 pt-10 md:pt-16 pb-24 stagger">
       <div>
         <p className="eyebrow">Your workspace</p>
       </div>
 
       <div>
         <h1
-          className="mt-5 font-display text-display-md md:text-display-lg text-ink"
+          className="mt-5 font-display text-display-md md:text-display-lg text-ink leading-[1.05]"
           style={{ fontVariationSettings: '"opsz" 144, "SOFT" 60' }}
         >
           {firstName ? (
@@ -45,7 +44,8 @@ export default function Dashboard() {
 
       <div>
         <p className="mt-4 text-ink-soft leading-relaxed max-w-prose">
-          Compose a new brief below, or revisit one from your archive.
+          Compose a new brief below — or pick one from the archive in the sidebar
+          to continue the conversation.
         </p>
       </div>
 
@@ -56,12 +56,14 @@ export default function Dashboard() {
         </div>
       </section>
 
-      <section id="archive" className="mt-20 scroll-mt-20">
-        <SectionHeading number="02" label="Archive" meta="Most recent first" />
-        <div className="mt-6">
-          <SessionList />
-        </div>
-      </section>
+      <div className="mt-20 rule-t pt-6">
+        <p className="font-display italic text-base text-ink-soft leading-relaxed max-w-prose"
+          style={{ fontVariationSettings: '"opsz" 144, "SOFT" 100' }}
+        >
+          Every brief is grounded in sources. Every answer is grounded in the brief.
+          Walk into the meeting knowing.
+        </p>
+      </div>
     </div>
   );
 }

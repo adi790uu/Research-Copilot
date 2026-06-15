@@ -6,19 +6,28 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 
+import re
+import unicodedata
+
 from fastapi import APIRouter, Depends, Request, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import CurrentUser, get_current_user
-from app.core.errors import NotFoundError
+from app.core.errors import AppError, NotFoundError
 from app.core.logging import get_logger
 from app.domain.events import WorkflowEvent
 from app.domain.report import Report, ReportContent
 from app.persistence.db import get_db_session
 from app.persistence.repositories import ReportRepository, SessionRepository
 from app.services.event_bus import WorkflowEventBus
+from app.services.pdf_export import PDFRenderError, report_to_pdf
 from app.services.workflow_service import WorkflowService
+
+
+class PDFUnavailableError(AppError):
+    status_code = 503
+    code = "pdf_renderer_unavailable"
 
 router = APIRouter(prefix="/sessions/{session_id}", tags=["workflow"])
 log = get_logger(__name__)
@@ -124,3 +133,53 @@ async def get_report(
         content=ReportContent.model_validate(content),
         created_at=row.created_at,
     )
+
+
+@router.get("/report.pdf")
+async def get_report_pdf(
+    session_id: str,
+    db: AsyncSession = Depends(get_db_session),
+    user: CurrentUser = Depends(get_current_user),
+) -> Response:
+    """Render the report as a print-styled PDF and return it as a download."""
+    owned = await SessionRepository(db, user.id).get(session_id)
+    if owned is None:
+        raise NotFoundError(f"Session {session_id} not found")
+
+    row = await ReportRepository(db).get_by_session(session_id)
+    if row is None:
+        raise NotFoundError(f"Report for session {session_id} not found")
+
+    content = row.content if isinstance(row.content, dict) else json.loads(row.content)
+    report = Report(
+        id=row.id,
+        session_id=row.session_id,
+        content=ReportContent.model_validate(content),
+        created_at=row.created_at,
+    )
+
+    try:
+        pdf_bytes = report_to_pdf(
+            report,
+            company_name=owned.company_name,
+            objective=owned.objective,
+        )
+    except PDFRenderError as exc:
+        log.error("pdf_renderer_unavailable", error=str(exc))
+        raise PDFUnavailableError(str(exc)) from exc
+
+    filename = f"brief-{_slugify(owned.company_name)}-{report.id[:6]}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "private, no-store",
+        },
+    )
+
+
+def _slugify(value: str) -> str:
+    """Filesystem-safe ASCII slug. Conservative: alnum + hyphen."""
+    normalized = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode()
+    return re.sub(r"[^a-zA-Z0-9]+", "-", normalized).strip("-").lower() or "brief"

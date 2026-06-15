@@ -83,7 +83,7 @@ export function ReportView({ report }: { report: Report }) {
   );
 
   return (
-    <div className="space-y-14">
+    <div className="space-y-16 text-ink">
       {SECTIONS.map((meta) => {
         const section = report.content[meta.key];
         return (
@@ -148,13 +148,13 @@ function SectionHead({
   id: string;
 }) {
   return (
-    <header className="flex items-baseline gap-3 mb-4 pb-2 rule-b">
-      <span className="font-mono tabular-nums text-xs text-ink-faint/70">
+    <header className="flex items-baseline gap-4 mb-5 pb-3 rule-b">
+      <span className="font-mono tabular-nums text-xs text-ink-faint/70 tracking-wider">
         {ordinal}
       </span>
       <h3
         id={id}
-        className="font-display text-xl italic text-ink"
+        className="font-display text-2xl italic text-ink leading-tight"
         style={{ fontVariationSettings: '"opsz" 144, "SOFT" 80, "WONK" 1' }}
       >
         {title}
@@ -179,10 +179,13 @@ function SectionBody({
       return <Prose>{content}</Prose>;
     }
     return (
-      <ol className="space-y-3 list-none">
+      <ol className="space-y-4 list-none max-w-[68ch]">
         {items.map((q, i) => (
-          <li key={i} className="flex items-baseline gap-3 text-sm text-ink-soft leading-relaxed max-w-prose">
-            <span className="font-mono tabular-nums text-[0.6875rem] text-ink-faint/70 mt-0.5 shrink-0">
+          <li
+            key={i}
+            className="flex items-baseline gap-4 text-[15px] text-ink/90 leading-[1.7]"
+          >
+            <span className="font-mono tabular-nums text-[0.6875rem] text-ink-faint/70 mt-1 shrink-0">
               {String(i + 1).padStart(2, "0")}
             </span>
             <span>{q}</span>
@@ -194,7 +197,7 @@ function SectionBody({
 
   if (meta.render === "callout") {
     return (
-      <div className="border-l-2 border-warn/50 pl-4 py-1 max-w-prose">
+      <div className="border-l-2 border-warn/50 pl-5 py-2 max-w-[68ch]">
         <Prose className="text-ink-soft italic">{content}</Prose>
       </div>
     );
@@ -210,9 +213,10 @@ function Prose({
   children: ReactNode;
   className?: string;
 }) {
+  // Reading-tuned: larger body, generous leading, comfortable measure.
   return (
     <div
-      className={`text-sm text-ink-soft leading-relaxed max-w-prose whitespace-pre-line ${className}`}
+      className={`text-[15px] text-ink/90 leading-[1.75] max-w-[68ch] whitespace-pre-line ${className}`}
     >
       {children}
     </div>
