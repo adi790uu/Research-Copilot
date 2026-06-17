@@ -1,8 +1,8 @@
 """Typed events emitted while a research run is in flight.
 
-Streamed over SSE to the frontend so the UI can show per-node progress, ask
-the user to answer clarification questions, approve the plan, and flip into
-report mode the moment the run finishes.
+Streamed over SSE during phase 1 (clarify → brief → plan). Phase 2 (the
+background research job) persists progress to the DB via `job_store`
+instead — the frontend polls the job row, not this event stream.
 """
 
 from datetime import UTC, datetime
@@ -58,15 +58,17 @@ class ClarificationRequested(_BaseEvent):
 
 
 class PlanReady(_BaseEvent):
-    """Graph hit interrupt_after=[create_research_plan]; service awaits approval."""
+    """Graph hit interrupt_after=[create_research_plan].
+
+    Phase 2 (the background research job) has been auto-spawned by the
+    service at this point; `job_id` tells the frontend where to poll. The
+    SSE stream closes immediately after this event is yielded. Mirrors the
+    `job_created` event in research-assistant.
+    """
 
     type: Literal["plan_ready"] = "plan_ready"
     plan: dict[str, Any]  # serialized ResearchPlan
-
-
-class ReportReady(_BaseEvent):
-    type: Literal["report_ready"] = "report_ready"
-    report_id: str
+    job_id: str
 
 
 class RunFailed(_BaseEvent):
@@ -81,10 +83,6 @@ WorkflowEvent = Annotated[
     | NodeFailed
     | ClarificationRequested
     | PlanReady
-    | ReportReady
     | RunFailed,
     Field(discriminator="type"),
 ]
-
-
-TERMINAL_EVENT_TYPES = frozenset({"report_ready", "run_failed", "clarification_requested"})

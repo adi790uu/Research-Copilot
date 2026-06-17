@@ -26,6 +26,15 @@ logger = logging.getLogger(__name__)
 
 
 async def clarify_with_user(state: AgentState, config: RunnableConfig) -> Command:
+    """Decide whether the objective needs a follow-up question.
+
+    Three terminal paths:
+    - Disabled via config → straight to `write_research_brief`.
+    - Needs clarification → END with a `{"type":"clarification",...}`
+      marker on the last AIMessage; the service translates that into a
+      `ClarificationRequested` event so the chat can collect answers.
+    - No clarification needed → `write_research_brief`.
+    """
     configurable = (config or {}).get("configurable", {}) or {}
     allow_clarification = configurable.get(
         "allow_clarification", get_settings().workflow_allow_clarification

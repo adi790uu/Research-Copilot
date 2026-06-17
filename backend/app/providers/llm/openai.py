@@ -1,9 +1,11 @@
 from collections.abc import AsyncIterator
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel
+
+from app.workflow.helpers import _model_accepts_temperature
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -15,12 +17,16 @@ class OpenAIProvider:
         self._base_url = base_url or None
 
     def _client(self, temperature: float) -> ChatOpenAI:
-        return ChatOpenAI(
-            api_key=self._api_key,
-            model=self._model,
-            temperature=temperature,
-            base_url=self._base_url,
-        )
+        kwargs: dict[str, Any] = {
+            "api_key": self._api_key,
+            "model": self._model,
+            "base_url": self._base_url,
+        }
+        # GPT-5 / o-series only accept the default temperature; sending one
+        # produces a 400. Omit on those families so the SDK uses the default.
+        if _model_accepts_temperature(self._model):
+            kwargs["temperature"] = temperature
+        return ChatOpenAI(**kwargs)
 
     async def complete(self, prompt: str, *, temperature: float = 0.2) -> str:
         result = await self._client(temperature).ainvoke([HumanMessage(content=prompt)])

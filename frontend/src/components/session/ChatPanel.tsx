@@ -1,774 +1,765 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useState, type FormEvent, type KeyboardEvent } from "react";
 
-import { useChatStream } from "../../hooks/useChatStream";
-import type { RunPhase, StreamState } from "../../hooks/useWorkflowStream";
+import type { ReportChatTurn } from "../../hooks/useReportChat";
+import { type ChatTurn, type RunPhase } from "../../hooks/useWorkflowChat";
 import type {
-  ChatWithMessages,
   ClarificationQuestion,
-  Report,
-  Source,
+  ResearchJob,
+  ResearcherResult,
   WorkflowNode,
 } from "../../lib/types";
-import { formatRelative } from "../../lib/format";
-import { SourceCitation } from "./SourceCitation";
-
-const PROMPTS = [
-  "What should I lead with?",
-  "What signals matter most right now?",
-  "Who else should be on the email?",
-];
-
-const RUNNING_NODE_LABEL: Record<WorkflowNode, string> = {
-  clarify_with_user: "Checking the objective",
-  write_research_brief: "Structuring the brief",
-  create_research_plan: "Building the research plan",
-  research_supervisor: "Researching across sources",
-  final_report_generation: "Writing the brief",
-};
+import { ClarificationCard } from "./ClarificationCard";
 
 interface Props {
-  chat: ChatWithMessages | null;
   companyName: string;
-  sources: Source[];
-  report: Report | null;
-  stream: StreamState;
-  /** Effective phase = max(session.status, stream.phase). Treats a completed
-   * session as completed even when the event bus replay is empty (revisit
-   * after backend restart). */
+  turns: ChatTurn[];
   phase: RunPhase;
-  onStart: () => void;
-  starting: boolean;
-  canStart: boolean;
+  streaming: boolean;
+  onAnswers: (answers: string[], questions: ClarificationQuestion[]) => void;
+  /** Click handler for the inline report Document card. Opens artifact
+   * panel scrolled to the report block. */
   onOpenReport: () => void;
-
-  // Plan-approval (interrupt_after=create_research_plan).
-  onApprovePlan: () => void;
-  approvingPlan: boolean;
-  approvePlanError?: string | null;
+  /** Click handler for the inline plan_ready card. Opens artifact panel
+   * scrolled to the plan block. */
   onOpenPlan: () => void;
+  error: string | null;
 
-  // Clarification (clarify_with_user terminated graph for user input).
-  onSubmitClarifications: (answers: string[]) => void;
-  submittingClarifications: boolean;
-  clarificationError?: string | null;
+  // ─── Follow-up chat (post-report) ─────────────────────────────────────
+  /** True once the report is ready — gates the composer + history. */
+  followupEnabled: boolean;
+  /** Persisted + streaming follow-up turns. */
+  followupTurns: ReportChatTurn[];
+  followupSending: boolean;
+  followupError: string | null;
+  onFollowupSend: (text: string) => Promise<void> | void;
+
+  /** Cold-load skeleton gate. True until session + job + (when
+   * applicable) follow-up history have all resolved. */
+  initialLoading: boolean;
+
+  /** Phase-2 state — fed to the run status ticker so it can keep
+   * showing live activity after SSE closes (researchers running, writing
+   * the brief, etc.) instead of freezing on "phase one complete". */
+  job: ResearchJob | null;
+  researchers: ResearcherResult[];
 }
 
 export function ChatPanel({
-  chat,
   companyName,
-  sources,
-  report,
-  stream,
+  turns,
   phase,
-  onStart,
-  starting,
-  canStart,
+  streaming,
+  onAnswers,
   onOpenReport,
-  onApprovePlan,
-  approvingPlan,
-  approvePlanError,
   onOpenPlan,
-  onSubmitClarifications,
-  submittingClarifications,
-  clarificationError,
+  error,
+  followupEnabled,
+  followupTurns,
+  followupSending,
+  followupError,
+  onFollowupSend,
+  initialLoading,
+  job,
+  researchers,
 }: Props) {
-  const { messages, streaming, error, sendMessage } = useChatStream(
-    chat?.id ?? null,
-    chat?.messages ?? []
-  );
-  const [draft, setDraft] = useState("");
-  const scrollerRef = useRef<HTMLDivElement>(null);
-  const stickToBottomRef = useRef(true);
+  // Pull the most recent unanswered clarification so the sticky widget can
+  // render it. The feed filter below suppresses any inline clarification
+  // turns so questions only ever appear in one place.
+  const lastClarification = findLast(turns, (t) =>
+    t.role === "assistant" && t.kind === "clarification" && !t.answered
+  ) as
+    | ({ role: "assistant"; kind: "clarification" } & {
+        questions: ClarificationQuestion[];
+      })
+    | undefined;
 
-  const sourceById = useMemo(() => {
-    const m: Record<string, { source: Source; index: number }> = {};
-    sources.forEach((s, i) => {
-      m[s.id] = { source: s, index: i + 1 };
-    });
-    return m;
-  }, [sources]);
-
-  useEffect(() => {
-    const el = scrollerRef.current;
-    if (!el || !stickToBottomRef.current) return;
-    el.scrollTop = el.scrollHeight;
-  }, [messages, phase]);
-
-  const onScroll = () => {
-    const el = scrollerRef.current;
-    if (!el) return;
-    stickToBottomRef.current =
-      el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-  };
-
-  const composerDisabled =
-    streaming || phase !== "completed" || chat == null;
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (composerDisabled) return;
-    const content = draft;
-    setDraft("");
-    await sendMessage(content);
-  };
-
-  const handleSuggest = async (prompt: string) => {
-    if (composerDisabled) return;
-    setDraft("");
-    await sendMessage(prompt);
-  };
+  // Decide what the bottom slot renders. Always render *something* so the
+  // input area is never empty — that's what makes the page feel like a
+  // proper chat. Priority:
+  //   1. Clarification widget when the LLM asks a question.
+  //   2. Follow-up composer once the report is ready.
+  //   3. Passive "waiting" composer otherwise — shows the user where
+  //      input would go and what state the run is in.
+  const showClarification =
+    phase === "awaiting_clarification" && !!lastClarification;
+  const showFollowup = followupEnabled && !showClarification;
 
   return (
-    <div className="flex flex-col h-full">
-      <div
-        ref={scrollerRef}
-        onScroll={onScroll}
-        className="flex-1 overflow-y-auto"
-      >
-        <div className="mx-auto w-full max-w-3xl px-5 sm:px-8 py-8 space-y-7">
-          <StatusBlock
-            companyName={companyName}
-            phase={phase}
-            stream={stream}
-            report={report}
-            starting={starting}
-            canStart={canStart}
-            onStart={onStart}
-            onOpenReport={onOpenReport}
-            onApprovePlan={onApprovePlan}
-            approvingPlan={approvingPlan}
-            approvePlanError={approvePlanError}
-            onOpenPlan={onOpenPlan}
-            onSubmitClarifications={onSubmitClarifications}
-            submittingClarifications={submittingClarifications}
-            clarificationError={clarificationError}
-          />
+    // Grid rows: header / feed (fr). Composer is absolutely positioned
+    // over the bottom of the feed so messages can scroll the full height
+    // of the panel. The feed has bottom padding equal to the composer's
+    // footprint so the last message scrolls fully into view.
+    <section
+      className="relative grid h-full min-h-0 bg-bg"
+      style={{ gridTemplateRows: "auto minmax(0, 1fr)" }}
+    >
+      <header className="px-8 pt-7 pb-5">
+        <p className="font-mono text-[0.625rem] uppercase tracking-eyebrow text-ink-faint">
+          Research session
+        </p>
+        <h2 className="mt-1.5 font-serif text-3xl tracking-tight text-ink">
+          {companyName}
+        </h2>
+      </header>
 
-          {messages.length > 0 && (
-            <div className="space-y-6">
-              {messages.map((m) => (
-                <MessageRow
-                  key={m.id}
-                  role={m.role}
-                  content={m.content}
-                  streaming={m.streaming === true && m.role === "assistant"}
-                  sourceById={sourceById}
+      <div className="overflow-y-auto px-8 pt-6 pb-40">
+        {initialLoading ? (
+          <FeedSkeleton />
+        ) : turns.length === 0 ? (
+          // Brief gap between auto-start and the first SSE event lands
+          // here — render nothing so the page stays quiet rather than
+          // flashing a placeholder. The node-status ticker will appear
+          // as soon as `run_started` arrives.
+          null
+        ) : (
+          <ol className="panel-reveal space-y-4">
+            {groupNodeStatuses(
+              turns.filter(
+                (t) =>
+                  !(t.role === "assistant" && t.kind === "clarification")
+              )
+            ).map((block, i) =>
+              block.kind === "node_group" ? (
+                <NodeStatusCard
+                  key={i}
+                  steps={block.steps}
+                  job={job}
+                  researchers={researchers}
                 />
-              ))}
-            </div>
-          )}
-
-          {phase === "completed" && messages.length === 0 && (
-            <SuggestionList onPick={handleSuggest} disabled={composerDisabled} />
-          )}
-
-          {error && (
-            <p className="font-mono text-[0.6875rem] uppercase tracking-wider text-bad">
-              {error}
-            </p>
-          )}
-        </div>
+              ) : (
+                <TurnView
+                  key={i}
+                  turn={block.turn}
+                  onOpenReport={onOpenReport}
+                  onOpenPlan={onOpenPlan}
+                />
+              )
+            )}
+            {followupTurns.map((t) => (
+              <FollowupTurnView key={t.id} turn={t} />
+            ))}
+          </ol>
+        )}
       </div>
 
-      <form
-        onSubmit={handleSubmit}
-        className="border-t border-rule/10 bg-bg/60 backdrop-blur"
-      >
-        <div className="mx-auto w-full max-w-3xl px-5 sm:px-8 py-4">
-        <div className="flex items-end gap-3">
-          <label htmlFor="chat-input" className="sr-only">
-            Ask the briefing
-          </label>
-          <textarea
-            id="chat-input"
-            rows={1}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                if (!composerDisabled && draft.trim()) {
-                  void handleSubmit(e as unknown as React.FormEvent);
+      {/* Footer slot — floats above the feed so messages can scroll
+          edge-to-edge. A soft top fade masks the scroll-into transition.
+          The footer itself sits on top with a high z-index. */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10">
+        {/* Top fade — messages scroll under this and dissolve into the
+            page background. pointer-events-none so it can't intercept. */}
+        <div
+          aria-hidden
+          className="h-12 bg-gradient-to-t from-bg to-transparent"
+        />
+        <div className="pointer-events-auto bg-bg">
+          {showClarification && lastClarification ? (
+            <div className="px-6 pt-3 pb-5">
+              <ClarificationCard
+                questions={lastClarification.questions}
+                submitting={streaming}
+                error={error}
+                onSubmit={(answers) =>
+                  onAnswers(answers, lastClarification.questions)
                 }
-              }
-            }}
-            placeholder={composerPlaceholder(phase)}
-            className="input flex-1 resize-none py-2"
-            style={{ maxHeight: "8rem" }}
-            disabled={composerDisabled}
-          />
-          <button
-            type="submit"
-            className="btn-primary"
-            disabled={composerDisabled || !draft.trim()}
-            aria-label="Send message"
-          >
-            <span className="hidden sm:inline">
-              {streaming ? "Streaming…" : "Send"}
-            </span>
-            <span aria-hidden className="arrow">→</span>
-          </button>
+              />
+            </div>
+          ) : showFollowup ? (
+            <FollowupComposer
+              sending={followupSending}
+              error={followupError}
+              onSend={onFollowupSend}
+            />
+          ) : (
+            <PassiveComposer phase={phase} />
+          )}
+          {error && phase !== "failed" && !showClarification ? (
+            <div className="px-8 pb-3">
+              <p className="font-mono text-[0.625rem] uppercase tracking-eyebrow text-bad">
+                {error}
+              </p>
+            </div>
+          ) : null}
         </div>
-        <p className="mt-2 font-mono text-[0.625rem] uppercase tracking-wider text-ink-faint/70">
-          <kbd className="not-italic">↵</kbd> to send ·{" "}
-          <kbd className="not-italic">⇧ ↵</kbd> for newline
-        </p>
-        </div>
-      </form>
-    </div>
+      </div>
+    </section>
   );
 }
 
-function composerPlaceholder(phase: RunPhase): string {
-  switch (phase) {
-    case "idle":
-      return "Start the research above to begin the conversation.";
-    case "running":
-      return "Researching… you can chat once the brief is ready.";
-    case "awaiting_clarification":
-      return "Answer the clarifying questions above to continue.";
-    case "awaiting_plan_approval":
-      return "Approve the plan above to dispatch the researchers.";
-    case "failed":
-      return "Run halted. Restart the research to chat.";
-    case "completed":
-      return "Ask the brief — sources, signals, talking points…";
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Top of the chat: status block. Adapts to workflow phase.
-// ---------------------------------------------------------------------------
-
-interface StatusBlockProps {
-  companyName: string;
-  phase: RunPhase;
-  stream: StreamState;
-  report: Report | null;
-  starting: boolean;
-  canStart: boolean;
-  onStart: () => void;
-  onOpenReport: () => void;
-  onApprovePlan: () => void;
-  approvingPlan: boolean;
-  approvePlanError?: string | null;
-  onOpenPlan: () => void;
-  onSubmitClarifications: (answers: string[]) => void;
-  submittingClarifications: boolean;
-  clarificationError?: string | null;
-}
-
-function StatusBlock({
-  companyName,
-  phase,
-  stream,
-  report,
-  starting,
-  canStart,
-  onStart,
-  onOpenReport,
-  onApprovePlan,
-  approvingPlan,
-  approvePlanError,
-  onOpenPlan,
-  onSubmitClarifications,
-  submittingClarifications,
-  clarificationError,
-}: StatusBlockProps) {
-  if (phase === "idle") {
-    return (
-      <IntroCard label="Ready to begin">
-        <h2
-          className="font-display italic text-[1.6rem] sm:text-[1.85rem] text-ink leading-tight"
-          style={{ fontVariationSettings: '"opsz" 144, "SOFT" 100, "WONK" 1' }}
-        >
-          A briefing on {companyName}, in a few minutes.
-        </h2>
-        <p className="mt-3 text-sm text-ink-soft leading-relaxed max-w-prose">
-          A LangGraph workflow plans, researches, synthesises, and reviews — then
-          the chat opens. Everything that follows is grounded in the briefing.
-        </p>
-        <div className="mt-5 flex items-center gap-3">
-          <button
-            type="button"
-            onClick={onStart}
-            disabled={!canStart || starting}
-            className="btn-primary"
-          >
-            {starting ? "Dispatching…" : "Start research"}
-            <span aria-hidden className="arrow">→</span>
-          </button>
-          <span className="font-mono text-[0.625rem] uppercase tracking-wider text-ink-faint">
-            ~2 min · 6 nodes
-          </span>
-        </div>
-      </IntroCard>
-    );
-  }
-
-  if (phase === "running") {
-    return <RunningCard stream={stream} />;
-  }
-
-  if (phase === "awaiting_clarification" && stream.clarification) {
-    return (
-      <ClarificationCard
-        questions={stream.clarification}
-        submitting={submittingClarifications}
-        error={clarificationError ?? null}
-        onSubmit={onSubmitClarifications}
-      />
-    );
-  }
-
-  if (phase === "awaiting_plan_approval" && stream.plan) {
-    return (
-      <PlanApprovalCard
-        userMessage={stream.plan.user_message}
-        subtopicCount={stream.plan.subtopics.length}
-        approving={approvingPlan}
-        error={approvePlanError ?? null}
-        onApprove={onApprovePlan}
-        onOpenPlan={onOpenPlan}
-      />
-    );
-  }
-
-  if (phase === "failed") {
-    return (
-      <IntroCard label="Run halted" tone="bad">
-        <h2
-          className="font-display italic text-2xl text-ink leading-tight"
-          style={{ fontVariationSettings: '"opsz" 144, "SOFT" 100, "WONK" 1' }}
-        >
-          The research couldn't complete.
-        </h2>
-        <p className="mt-3 text-sm text-ink-soft leading-relaxed max-w-prose">
-          {stream.error ?? "An unexpected error stopped the workflow."}
-        </p>
-        <div className="mt-5">
-          <button
-            type="button"
-            onClick={onStart}
-            disabled={!canStart || starting}
-            className="btn-primary"
-          >
-            {starting ? "Retrying…" : "Retry research"}
-            <span aria-hidden className="arrow">→</span>
-          </button>
-        </div>
-      </IntroCard>
-    );
-  }
-
-  // completed
-  return (
-    <div className="flex flex-col gap-2.5">
-      <span className="eyebrow">Assistant</span>
-      <p className="text-[0.95rem] text-ink leading-relaxed max-w-prose">
-        I've completed your research on{" "}
-        <span className="text-ink">{companyName}</span>. Feel free to ask
-        follow-up questions or request changes.
-      </p>
-      <CompletionCard
-        companyName={companyName}
-        createdAt={report?.created_at}
-        onOpen={onOpenReport}
-      />
-    </div>
-  );
-}
-
-function IntroCard({
-  label,
-  tone,
-  children,
-}: {
-  label: string;
-  tone?: "bad";
-  children: React.ReactNode;
-}) {
+function FeedSkeleton() {
+  // Editorial loader: a single warm filament being drawn beneath a soft
+  // accent halo. Captions cross-fade through what's loading. Quiet,
+  // intentional — no fake bubble placeholders.
   return (
     <div
-      className={`relative overflow-hidden rounded-sm border ${
-        tone === "bad"
-          ? "border-bad/30 bg-bad/5"
-          : "border-rule/10 bg-bg-elev/40"
-      } px-6 sm:px-8 py-7`}
+      className="flex h-full min-h-[60vh] flex-col items-center justify-center gap-8"
+      aria-busy="true"
+      aria-live="polite"
     >
-      <p className="eyebrow">{label}</p>
-      <div className="mt-3">{children}</div>
-    </div>
-  );
-}
-
-function RunningCard({ stream }: { stream: StreamState }) {
-  // Find the active or most recently completed node label.
-  const activeNode = findActiveNode(stream);
-  const label = activeNode ? RUNNING_NODE_LABEL[activeNode] : "Dispatching the workflow";
-  return (
-    <div className="relative overflow-hidden rounded-sm border border-rule/10 bg-bg-elev/40 px-6 sm:px-8 py-6">
-      <div className="flex items-center gap-3">
-        <span
+      <div className="relative grid place-items-center">
+        {/* Halo */}
+        <div
           aria-hidden
-          className="h-2 w-2 rounded-full bg-info animate-pulse-dot"
+          className="absolute h-40 w-40 rounded-full blur-2xl"
+          style={{
+            background:
+              "radial-gradient(circle, rgb(var(--accent) / 0.35), transparent 70%)",
+            animation: "halo-breathe 3.2s ease-in-out infinite",
+          }}
         />
-        <p className="eyebrow text-info">Researching</p>
-      </div>
-      <p
-        className="mt-3 font-display italic text-xl sm:text-2xl text-ink leading-tight"
-        style={{ fontVariationSettings: '"opsz" 144, "SOFT" 100, "WONK" 1' }}
-      >
-        {label}…
-      </p>
-      <p className="mt-2 text-sm text-ink-soft">
-        Watch the live progress in the Plan tab on the right.
-      </p>
-    </div>
-  );
-}
-
-function findActiveNode(stream: StreamState): WorkflowNode | null {
-  const NODES: WorkflowNode[] = [
-    "clarify_with_user",
-    "write_research_brief",
-    "create_research_plan",
-    "research_supervisor",
-    "final_report_generation",
-  ];
-  // Prefer currently running; else last completed.
-  const running = NODES.find((n) => stream.nodes[n]?.phase === "running");
-  if (running) return running;
-  for (let i = NODES.length - 1; i >= 0; i--) {
-    if (stream.nodes[NODES[i]]?.phase === "completed") return NODES[i];
-  }
-  return null;
-}
-
-// ---------------------------------------------------------------------------
-// Clarification + plan-approval cards.
-// ---------------------------------------------------------------------------
-
-function ClarificationCard({
-  questions,
-  submitting,
-  error,
-  onSubmit,
-}: {
-  questions: ClarificationQuestion[];
-  submitting: boolean;
-  error: string | null;
-  onSubmit: (answers: string[]) => void;
-}) {
-  const [answers, setAnswers] = useState<string[]>(() =>
-    questions.map(() => "")
-  );
-
-  const setAt = (i: number, v: string) =>
-    setAnswers((cur) => {
-      const next = cur.slice();
-      next[i] = v;
-      return next;
-    });
-
-  const canSubmit =
-    !submitting && answers.every((a) => a.trim().length > 0);
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!canSubmit) return;
-    onSubmit(answers.map((a) => a.trim()));
-  };
-
-  return (
-    <form
-      onSubmit={handleSubmit}
-      className="relative overflow-hidden rounded-sm border border-warn/30 bg-warn/5 px-6 sm:px-8 py-6"
-    >
-      <div className="flex items-center gap-3">
-        <span
-          aria-hidden
-          className="h-2 w-2 rounded-full bg-warn animate-pulse-dot"
-        />
-        <p className="eyebrow text-warn">Quick clarification</p>
-      </div>
-      <p
-        className="mt-3 font-display italic text-xl text-ink leading-tight"
-        style={{ fontVariationSettings: '"opsz" 144, "SOFT" 100, "WONK" 1' }}
-      >
-        Help me aim the research.
-      </p>
-
-      <ol className="mt-5 space-y-5">
-        {questions.map((q, i) => (
-          <li key={i} className="space-y-2">
-            <p className="text-sm text-ink leading-relaxed">
-              <span className="font-mono text-[0.6875rem] uppercase tracking-wider text-ink-faint mr-2">
-                Q{i + 1}
-              </span>
-              {q.question}
-            </p>
-            {q.suggested_answers.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {q.suggested_answers.map((s) => {
-                  const active = answers[i] === s;
-                  return (
-                    <button
-                      key={s}
-                      type="button"
-                      onClick={() => setAt(i, s)}
-                      disabled={submitting}
-                      className={`px-3 py-1.5 rounded-full text-xs transition-colors border ${
-                        active
-                          ? "bg-ink text-bg border-ink"
-                          : "border-ink/15 hover:border-ink/40 text-ink-soft"
-                      } disabled:opacity-50 disabled:cursor-not-allowed`}
-                    >
-                      {s}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-            <input
-              type="text"
-              value={answers[i] ?? ""}
-              onChange={(e) => setAt(i, e.target.value)}
-              placeholder="Or type your own answer…"
-              disabled={submitting}
-              className="input w-full mt-1"
-            />
-          </li>
-        ))}
-      </ol>
-
-      <div className="mt-5 flex items-center justify-between gap-3">
-        <p className="font-mono text-[0.625rem] uppercase tracking-wider text-ink-faint">
-          Submitting kicks the research off.
-        </p>
-        <button
-          type="submit"
-          className="btn-primary"
-          disabled={!canSubmit}
-        >
-          {submitting ? "Submitting…" : "Continue"}
-          <span aria-hidden className="arrow">→</span>
-        </button>
-      </div>
-
-      {error && (
-        <p className="mt-3 font-mono text-[0.6875rem] uppercase tracking-wider text-bad">
-          {error}
-        </p>
-      )}
-    </form>
-  );
-}
-
-function PlanApprovalCard({
-  userMessage,
-  subtopicCount,
-  approving,
-  error,
-  onApprove,
-  onOpenPlan,
-}: {
-  userMessage: string;
-  subtopicCount: number;
-  approving: boolean;
-  error: string | null;
-  onApprove: () => void;
-  onOpenPlan: () => void;
-}) {
-  return (
-    <div className="relative overflow-hidden rounded-sm border border-warn/30 bg-warn/5 px-6 sm:px-8 py-6">
-      <div className="flex items-center gap-3">
-        <span aria-hidden className="h-2 w-2 rounded-full bg-warn" />
-        <p className="eyebrow text-warn">Plan ready · approval needed</p>
-      </div>
-      <p
-        className="mt-3 font-display italic text-xl text-ink leading-tight"
-        style={{ fontVariationSettings: '"opsz" 144, "SOFT" 100, "WONK" 1' }}
-      >
-        {userMessage}
-      </p>
-      <p className="mt-2 text-sm text-ink-soft">
-        {subtopicCount} subtopic{subtopicCount === 1 ? "" : "s"} queued.
-        Review the full plan on the right before dispatching.
-      </p>
-      <div className="mt-5 flex items-center gap-3 flex-wrap">
-        <button
-          type="button"
-          onClick={onApprove}
-          disabled={approving}
-          className="btn-primary"
-        >
-          {approving ? "Dispatching…" : "Approve & run"}
-          <span aria-hidden className="arrow">→</span>
-        </button>
-        <button
-          type="button"
-          onClick={onOpenPlan}
-          className="btn-ghost text-xs"
-        >
-          Review plan →
-        </button>
-      </div>
-      {error && (
-        <p className="mt-3 font-mono text-[0.6875rem] uppercase tracking-wider text-bad">
-          {error}
-        </p>
-      )}
-    </div>
-  );
-}
-
-function CompletionCard({
-  companyName,
-  createdAt,
-  onOpen,
-}: {
-  companyName: string;
-  createdAt?: string;
-  onOpen: () => void;
-}) {
-  return (
-    <div className="mt-2 relative overflow-hidden rounded-lg bg-surface/70 hover:bg-surface transition-colors">
-      <button
-        type="button"
-        onClick={onOpen}
-        className="w-full grid grid-cols-[auto_1fr_auto] items-center gap-4 px-5 py-4 text-left"
-      >
-        <span
-          aria-hidden
-          className="h-9 w-9 rounded-md bg-bg-elev/70 flex items-center justify-center text-accent"
-          style={{ fontVariationSettings: '"opsz" 144, "SOFT" 100, "WONK" 1' }}
-        >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
-            <path d="M3.5 2h6l3 3v9a.5.5 0 0 1-.5.5h-8.5a.5.5 0 0 1-.5-.5V2.5a.5.5 0 0 1 .5-.5z" strokeLinejoin="round" />
-            <path d="M9.5 2v3.5h3M5 8h6M5 10.5h6M5 13h4" strokeLinecap="round" />
-          </svg>
-        </span>
-        <span className="min-w-0">
-          <span className="block text-sm text-ink leading-snug">
-            Brief — {companyName}
-          </span>
-          <span className="block mt-0.5 font-mono text-[0.6875rem] uppercase tracking-wider text-ink-faint">
-            {createdAt ? formatRelative(createdAt) : "Ready"} · Nine sections
-          </span>
-        </span>
-        <span className="inline-flex items-center gap-1.5 font-mono text-[0.6875rem] uppercase tracking-wider text-ink-soft">
-          Open
-          <span aria-hidden>→</span>
-        </span>
-      </button>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Messages + citations
-// ---------------------------------------------------------------------------
-
-interface MessageRowProps {
-  role: "user" | "assistant";
-  content: string;
-  streaming: boolean;
-  sourceById: Record<string, { source: Source; index: number }>;
-}
-
-function MessageRow({ role, content, streaming, sourceById }: MessageRowProps) {
-  if (role === "user") {
-    return (
-      <div className="flex justify-end">
-        <div className="max-w-[82%] bg-surface px-4 py-2.5 rounded-2xl rounded-br-md shadow-[0_1px_0_rgb(0_0_0_/_0.15)]">
-          <p className="text-[0.9375rem] text-ink whitespace-pre-wrap leading-relaxed">
-            {content}
-          </p>
+        {/* Filament — a single warm thread drawn across an etched track */}
+        <div className="relative h-px w-44 overflow-hidden rounded-full bg-ink/8">
+          <div
+            aria-hidden
+            className="absolute inset-y-0 h-px w-1/2"
+            style={{
+              background:
+                "linear-gradient(90deg, transparent, rgb(var(--accent)) 50%, transparent)",
+              animation: "filament-draw 1.8s cubic-bezier(0.4, 0, 0.2, 1) infinite",
+            }}
+          />
         </div>
       </div>
-    );
-  }
 
-  return (
-    <div className="flex flex-col gap-1.5">
-      <span className="eyebrow">Assistant</span>
-      <div className="text-[0.9375rem] text-ink leading-relaxed whitespace-pre-wrap max-w-prose">
-        <RenderWithCitations text={content} sourceById={sourceById} />
-        {streaming && <StreamingCursor />}
+      <div className="flex flex-col items-center gap-2 text-center">
+        <p className="font-serif text-xl tracking-tight text-ink">
+          Assembling your session
+        </p>
+        <CyclingCaption />
       </div>
     </div>
   );
 }
 
-const CITATION_RE = /\[([a-zA-Z0-9_-]+(?:\s*,\s*[a-zA-Z0-9_-]+)*)\]/g;
-
-function RenderWithCitations({
-  text,
-  sourceById,
-}: {
-  text: string;
-  sourceById: Record<string, { source: Source; index: number }>;
-}) {
-  if (!text) return null;
-  const out: React.ReactNode[] = [];
-  let lastIdx = 0;
-  let key = 0;
-
-  for (const match of text.matchAll(CITATION_RE)) {
-    const ids = match[1].split(/\s*,\s*/);
-    const known = ids.map((id) => sourceById[id]).filter(Boolean);
-    if (known.length === 0) continue;
-
-    const start = match.index ?? 0;
-    if (start > lastIdx) out.push(text.slice(lastIdx, start));
-    known.forEach(({ source, index }, i) => {
-      out.push(
-        <SourceCitation key={`c-${key++}`} source={source} index={index} />
-      );
-      if (i < known.length - 1) out.push(" ");
-    });
-    lastIdx = start + match[0].length;
-  }
-  if (lastIdx < text.length) out.push(text.slice(lastIdx));
-  return <>{out}</>;
+function CyclingCaption() {
+  // Stacked captions cross-fade via a single keyframe with offset
+  // animation-delay. No JS timer — pure CSS so it stays cheap and works
+  // when the tab is backgrounded.
+  const captions = [
+    "Reading the brief",
+    "Catching up on the researchers",
+    "Stacking the sources",
+    "Setting the type",
+  ];
+  const duration = captions.length * 3.2; // seconds per cycle
+  return (
+    <div className="relative flex h-4 w-[22rem] items-center justify-center">
+      {captions.map((c, i) => (
+        <span
+          key={c}
+          className="absolute inset-0 flex items-center justify-center whitespace-nowrap text-center font-mono text-[0.6875rem] uppercase tracking-eyebrow text-ink-faint opacity-0"
+          style={{
+            animation: `caption-rotate ${duration}s linear infinite both`,
+            animationDelay: `${(i * duration) / captions.length}s`,
+          }}
+        >
+          {c}
+          <span className="ml-1 text-accent">·</span>
+        </span>
+      ))}
+    </div>
+  );
 }
 
-function StreamingCursor() {
+function PassiveComposer({ phase }: { phase: RunPhase }) {
+  let hint = "Follow-up chat unlocks once the report is ready.";
+  if (phase === "running")
+    hint = "Agents are running — follow-up unlocks once the report is ready.";
+  else if (phase === "failed") hint = "Run failed. Start a new brief to try again.";
+
+  return (
+    <div className="shrink-0 px-6 pt-2 pb-5">
+      <div className="mx-auto w-full max-w-[36rem]">
+        <div className="rounded-2xl bg-bg-elev px-4 pt-3 pb-2 opacity-70">
+          <textarea
+            rows={1}
+            disabled
+            placeholder={hint}
+            className="block w-full resize-none bg-transparent text-[0.95rem] leading-relaxed text-ink-faint placeholder:text-ink-faint focus:outline-none"
+          />
+          <div className="mt-2 flex items-center justify-between gap-3">
+            <p className="font-mono text-[0.625rem] uppercase tracking-eyebrow text-ink-faint">
+              {hint}
+            </p>
+            <span
+              aria-hidden
+              className="font-mono text-[0.6875rem] uppercase tracking-eyebrow text-ink-faint/70"
+            >
+              Send →
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TurnView({
+  turn,
+  onOpenReport,
+  onOpenPlan,
+}: {
+  turn: ChatTurn;
+  onOpenReport: () => void;
+  onOpenPlan: () => void;
+}) {
+  if (turn.role === "user") {
+    if (turn.kind === "answers") {
+      return (
+        <li className="flex justify-end">
+          <div className="max-w-[78%] rounded-[20px] rounded-br-[6px] bg-accent/15 px-4 py-2.5 text-ink">
+            <ul className="space-y-1.5 text-sm leading-relaxed">
+              {turn.lines.map((l, i) => (
+                <li key={i}>
+                  <span className="text-ink/70">{l.question}</span>
+                  <br />
+                  <span>{l.answer}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </li>
+      );
+    }
+    return (
+      <li className="flex justify-end">
+        <p className="max-w-[78%] whitespace-pre-wrap rounded-[20px] rounded-br-[6px] bg-accent/15 px-4 py-2.5 text-sm leading-relaxed text-ink">
+          {turn.content}
+        </p>
+      </li>
+    );
+  }
+  switch (turn.kind) {
+    case "node_status":
+      // Rendered in the grouped NodeStatusCard above; never reached.
+      return null;
+    case "clarification":
+      // Should be unreachable — filtered out at the feed level. Render
+      // nothing rather than a stale card.
+      return null;
+    case "plan_ready":
+      return (
+        <li>
+          <button
+            type="button"
+            onClick={onOpenPlan}
+            className="group block w-full max-w-[78%] rounded-[20px] rounded-bl-[6px] bg-ink/[0.04] px-4 py-3 text-left transition-colors hover:bg-ink/[0.07]"
+          >
+            <p className="font-mono text-[0.625rem] uppercase tracking-eyebrow text-accent">
+              Plan ready
+            </p>
+            <p className="mt-1.5 text-sm leading-relaxed text-ink">
+              Researchers are dispatched. Tap to open the plan in the workspace.
+            </p>
+          </button>
+        </li>
+      );
+    case "report_ready":
+      // Document-style card: clicking opens the artifact panel scrolled
+      // to the report block.
+      return (
+        <li>
+          <button
+            type="button"
+            onClick={onOpenReport}
+            className="group flex w-full max-w-[78%] items-center gap-3 rounded-[20px] rounded-bl-[6px] bg-ink/[0.04] px-4 py-3 text-left transition-colors hover:bg-ink/[0.08]"
+          >
+            <DocIcon />
+            <span className="min-w-0 flex-1">
+              <span
+                className="block truncate font-serif text-base text-ink"
+                title={turn.title}
+              >
+                {turn.title}
+              </span>
+              <span className="block font-mono text-[0.6875rem] uppercase tracking-eyebrow text-ink-faint">
+                Document · brief
+              </span>
+            </span>
+            <span className="font-mono text-[0.6875rem] uppercase tracking-eyebrow text-accent opacity-60 transition-opacity group-hover:opacity-100">
+              Open ↗
+            </span>
+          </button>
+        </li>
+      );
+    case "failed":
+      return (
+        <li>
+          <div className="max-w-[78%] rounded-[20px] rounded-bl-[6px] bg-bad/10 px-4 py-3">
+            <p className="font-mono text-[0.625rem] uppercase tracking-eyebrow text-bad">
+              Run failed
+            </p>
+            <p className="mt-1.5 text-sm leading-relaxed text-ink-soft">
+              {turn.message}
+            </p>
+          </div>
+        </li>
+      );
+    default:
+      return null;
+  }
+}
+
+function findLast<T>(arr: T[], pred: (x: T) => boolean): T | undefined {
+  for (let i = arr.length - 1; i >= 0; i--) {
+    if (pred(arr[i])) return arr[i];
+  }
+  return undefined;
+}
+
+// ─── Node-status grouping ──────────────────────────────────────────────────
+
+type NodeStatusTurn = Extract<ChatTurn, { kind: "node_status" }>;
+
+type FeedBlock =
+  | { kind: "node_group"; steps: NodeStatusTurn[] }
+  | { kind: "turn"; turn: ChatTurn };
+
+/** Fold consecutive node_status turns into one group so the feed shows a
+ * single "Working" card instead of N free-floating bullet rows. */
+function groupNodeStatuses(turns: ChatTurn[]): FeedBlock[] {
+  const out: FeedBlock[] = [];
+  let bucket: NodeStatusTurn[] = [];
+  const flush = () => {
+    if (bucket.length) {
+      out.push({ kind: "node_group", steps: bucket });
+      bucket = [];
+    }
+  };
+  for (const t of turns) {
+    if (t.role === "assistant" && t.kind === "node_status") {
+      bucket.push(t);
+    } else {
+      flush();
+      out.push({ kind: "turn", turn: t });
+    }
+  }
+  flush();
+  return out;
+}
+
+/** The five "phases" the run walks through. Phase 1 events arrive from
+ * SSE; phase 2 is derived from polled job + researcher state. */
+const RUN_PHASES: { id: number; label: string }[] = [
+  { id: 1, label: "Checking the objective" },
+  { id: 2, label: "Structuring the brief" },
+  { id: 3, label: "Building the research plan" },
+  { id: 4, label: "Researching" },
+  { id: 5, label: "Writing the brief" },
+];
+
+type StepState = "done" | "live" | "pending" | "failed";
+
+/** Five-dot progression strip + current-activity label. Gives the user a
+ * visual sense of how far the run has come without showing every event
+ * inline. Single line, compact, stays alive across phase 1 and 2. */
+function NodeStatusCard({
+  steps,
+  job,
+  researchers,
+}: {
+  steps: NodeStatusTurn[];
+  job: ResearchJob | null;
+  researchers: ResearcherResult[];
+}) {
+  // Defensively pick the latest phase per node, keeping arrival order.
+  const ordered: NodeStatusTurn[] = [];
+  const seen = new Map<string, number>();
+  for (const s of steps) {
+    const idx = seen.get(s.node);
+    if (idx === undefined) {
+      seen.set(s.node, ordered.length);
+      ordered.push(s);
+    } else {
+      ordered[idx] = s;
+    }
+  }
+
+  if (ordered.length === 0) return null;
+
+  const states = computePhaseStates(ordered, job, researchers);
+  const current =
+    states.find((s) => s.state === "failed") ??
+    states.find((s) => s.state === "live");
+  if (!current) return null; // run is fully done — let the Document card carry the moment
+
+  const isFailed = current.state === "failed";
+
+  return (
+    <li className="panel-reveal max-w-[80%]">
+      <div
+        className={`flex items-center gap-3.5 rounded-full bg-bg-elev/55 px-4 py-1.5 ${
+          isFailed ? "ring-1 ring-bad/40" : ""
+        }`}
+      >
+        {/* Five-dot progress strip */}
+        <div
+          className="flex shrink-0 items-center gap-1.5"
+          role="progressbar"
+          aria-valuenow={current.phase}
+          aria-valuemin={1}
+          aria-valuemax={RUN_PHASES.length}
+        >
+          {states.map((s, i) => (
+            <PhaseDot key={i} state={s.state} />
+          ))}
+        </div>
+
+        {/* Divider */}
+        <span aria-hidden className="h-3 w-px shrink-0 bg-rule/15" />
+
+        {/* Current activity label */}
+        <span className="min-w-0 flex-1 truncate text-sm">
+          <span className={isFailed ? "text-bad" : "text-ink"}>
+            {current.label}
+          </span>
+          {current.sublabel ? (
+            <span className="ml-1.5 text-ink-faint">· {current.sublabel}</span>
+          ) : null}
+        </span>
+      </div>
+
+      {/* Inline error message for hard failures. */}
+      {current.error ? (
+        <p className="mt-1.5 px-4 text-xs leading-relaxed text-ink-faint">
+          {current.error}
+        </p>
+      ) : null}
+    </li>
+  );
+}
+
+/** Render one dot in the progress strip. */
+function PhaseDot({ state }: { state: StepState }) {
+  if (state === "done") {
+    return (
+      <span
+        aria-hidden
+        className="block h-1.5 w-1.5 rounded-full bg-accent/70"
+      />
+    );
+  }
+  if (state === "live") {
+    return (
+      <span aria-hidden className="relative grid h-1.5 w-1.5 place-items-center">
+        <span className="absolute inset-[-3px] rounded-full bg-accent/25 animate-pulse-dot" />
+        <span className="absolute inset-0 rounded-full bg-accent" />
+      </span>
+    );
+  }
+  if (state === "failed") {
+    return <span aria-hidden className="block h-1.5 w-1.5 rounded-full bg-bad" />;
+  }
   return (
     <span
       aria-hidden
-      className="inline-block w-[0.4em] h-[1em] align-text-bottom ml-1 bg-ink/70"
-      style={{ animation: "cursor-blink 1s steps(1) infinite" }}
+      className="block h-1.5 w-1.5 rounded-full border border-ink-faint/30"
     />
   );
 }
 
-function SuggestionList({
-  onPick,
-  disabled,
-}: {
-  onPick: (q: string) => void;
-  disabled: boolean;
-}) {
+/** Derive the state of each of the 5 phases. Phase 1-3 read directly
+ * from SSE node_status turns; phase 4-5 are derived from the polled job
+ * + researcher rows (the SSE has long since closed by then). */
+function computePhaseStates(
+  ordered: NodeStatusTurn[],
+  job: ResearchJob | null,
+  researchers: ResearcherResult[]
+): {
+  phase: number;
+  label: string;
+  state: StepState;
+  sublabel?: string;
+  error?: string;
+}[] {
+  const NODE_TO_PHASE: Partial<Record<WorkflowNode, number>> = {
+    clarify_with_user: 1,
+    write_research_brief: 2,
+    create_research_plan: 3,
+  };
+
+  const stepState: Record<number, StepState> = {
+    1: "pending",
+    2: "pending",
+    3: "pending",
+    4: "pending",
+    5: "pending",
+  };
+  let errorBy: Partial<Record<number, string>> = {};
+
+  // Phase 1 — read directly off SSE events.
+  for (const s of ordered) {
+    const p = NODE_TO_PHASE[s.node];
+    if (p === undefined) continue;
+    stepState[p] =
+      s.phase === "completed" ? "done" : s.phase === "failed" ? "failed" : "live";
+    if (s.phase === "failed" && s.error) errorBy[p] = s.error;
+  }
+
+  // Phase 1-3 fully done? Once they are, derive phase 4 + 5 from job/researchers.
+  const phase1to3Done = [1, 2, 3].every((p) => stepState[p] === "done");
+
+  if (phase1to3Done) {
+    if (job?.status === "failed") {
+      // Phase 2 failed at research/writing — mark phase 4 as the failed step.
+      stepState[4] = "failed";
+    } else if (job?.final_report || job?.status === "completed") {
+      stepState[4] = "done";
+      stepState[5] = "done";
+    } else {
+      // Job still running (or not yet fetched — backend auto-spawned it).
+      // No reliable signal for "researchers done, now writing the brief",
+      // so phase 4 stays live until the job is completed; phase 5 then
+      // flips together with phase 4 as the Document card takes over.
+      stepState[4] = "live";
+    }
+  }
+
+  return RUN_PHASES.map(({ id, label }) => {
+    let sublabel: string | undefined;
+    if (id === 4 && stepState[4] === "live" && researchers.length > 0) {
+      sublabel = `${researchers.length} ${
+        researchers.length === 1 ? "agent" : "agents"
+      } reported back`;
+    }
+    return {
+      phase: id,
+      label,
+      state: stepState[id],
+      sublabel,
+      error: errorBy[id],
+    };
+  });
+}
+
+function FollowupTurnView({ turn }: { turn: ReportChatTurn }) {
+  if (turn.role === "user") {
+    return (
+      <li className="flex justify-end">
+        <p className="max-w-[78%] whitespace-pre-wrap rounded-[20px] rounded-br-[6px] bg-accent/15 px-4 py-2.5 text-sm leading-relaxed text-ink">
+          {turn.content}
+        </p>
+      </li>
+    );
+  }
+  // assistant
   return (
-    <div className="pt-1">
-      <p className="font-mono text-[0.625rem] uppercase tracking-wider text-ink-faint mb-3">
-        Try asking
-      </p>
-      <div className="flex flex-wrap gap-2">
-        {PROMPTS.map((p) => (
-          <button
-            key={p}
-            type="button"
-            disabled={disabled}
-            onClick={() => onPick(p)}
-            className="btn-ghost text-xs disabled:opacity-50"
-          >
-            {p}
-          </button>
-        ))}
+    <li>
+      <div className="max-w-[78%] rounded-[20px] rounded-bl-[6px] bg-ink/[0.04] px-4 py-2.5">
+        <p className="whitespace-pre-wrap text-sm leading-relaxed text-ink">
+          {turn.content || (turn.streaming ? "Thinking…" : "")}
+          {turn.streaming && turn.content ? (
+            <span className="ml-1 inline-block h-3.5 w-[2px] translate-y-0.5 animate-pulse-dot bg-accent align-middle" />
+          ) : null}
+        </p>
       </div>
-    </div>
+    </li>
+  );
+}
+
+function FollowupComposer({
+  sending,
+  error,
+  onSend,
+}: {
+  sending: boolean;
+  error: string | null;
+  onSend: (text: string) => Promise<void> | void;
+}) {
+  const [draft, setDraft] = useState("");
+
+  function submit(e?: FormEvent) {
+    e?.preventDefault();
+    const text = draft.trim();
+    if (!text || sending) return;
+    void onSend(text);
+    setDraft("");
+  }
+
+  function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+    // Enter sends; Shift+Enter inserts a newline.
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      submit();
+    }
+  }
+
+  const canSend = !!draft.trim() && !sending;
+
+  return (
+    <form onSubmit={submit} className="shrink-0 px-6 pt-2 pb-5">
+      <div className="mx-auto w-full max-w-[36rem]">
+        <div className="group/composer rounded-2xl bg-bg-elev px-4 pt-3 pb-2 transition-colors focus-within:bg-bg-elev/90">
+          <textarea
+            rows={1}
+            value={draft}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              const el = e.currentTarget;
+              el.style.height = "auto";
+              el.style.height = `${Math.min(el.scrollHeight, 180)}px`;
+            }}
+            onKeyDown={onKeyDown}
+            placeholder="Ask a follow-up about the report…"
+            disabled={sending}
+            className="block w-full resize-none bg-transparent text-[0.95rem] leading-relaxed text-ink placeholder:text-ink-faint/70 focus:outline-none disabled:opacity-50"
+          />
+          <div className="mt-2 flex items-center justify-between gap-3">
+            <p className="font-mono text-[0.625rem] uppercase tracking-eyebrow text-ink-faint">
+              Grounded in the brief
+            </p>
+            <button
+              type="submit"
+              disabled={!canSend}
+              className="group/send inline-flex items-center gap-1.5 rounded-md px-2 py-1 font-mono text-[0.6875rem] uppercase tracking-eyebrow text-ink-faint transition-colors enabled:hover:text-accent disabled:opacity-50"
+            >
+              {sending ? (
+                <>
+                  <span className="block h-3 w-3 animate-spin rounded-full border-[1.5px] border-current border-r-transparent" />
+                  Sending
+                </>
+              ) : (
+                <>
+                  Send
+                  <span
+                    aria-hidden
+                    className="inline-block transition-transform group-hover/send:translate-x-0.5"
+                  >
+                    →
+                  </span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+        {error ? (
+          <p className="mt-2 px-1 font-mono text-[0.625rem] uppercase tracking-eyebrow text-bad">
+            {error}
+          </p>
+        ) : null}
+      </div>
+    </form>
+  );
+}
+
+function DocIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={32}
+      height={32}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.5}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="h-8 w-8 shrink-0 text-accent"
+      aria-hidden="true"
+    >
+      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+      <path d="M14 3v5h5" />
+      <path d="M9 13h6" />
+      <path d="M9 17h4" />
+    </svg>
   );
 }

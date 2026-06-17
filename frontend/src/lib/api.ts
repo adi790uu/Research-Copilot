@@ -1,16 +1,18 @@
-import { useAuth } from "@clerk/clerk-react";
 import { useMemo } from "react";
+
+import { useAuth } from "./auth";
 
 import type {
   ActivitySummary,
-  Chat,
-  ChatCreate,
-  ChatWithMessages,
-  Message,
-  MessageCreate,
-  Report,
+  ChatTurnPayload,
+  FollowupMessage,
+  ResearchJob,
+  ResearchJobEvent,
+  ResearchTask,
+  ResearcherResult,
   Session,
   SessionCreate,
+  SessionPage,
   User,
 } from "./types";
 
@@ -32,9 +34,11 @@ export class ApiError extends Error {
 
 export type Health = { status: string; version: string };
 
+type TokenSource = (() => string | null) | null;
+
 type Fetcher = <T>(path: string, init?: RequestInit) => Promise<T>;
 
-function buildFetcher(getToken: (() => Promise<string | null>) | null): Fetcher {
+function buildFetcher(getToken: TokenSource): Fetcher {
   return async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
@@ -42,7 +46,7 @@ function buildFetcher(getToken: (() => Promise<string | null>) | null): Fetcher 
     };
 
     if (getToken) {
-      const token = await getToken();
+      const token = getToken();
       if (token) headers.Authorization = `Bearer ${token}`;
     }
 
@@ -86,30 +90,37 @@ interface ApiClient {
   };
   sessions: {
     create: (payload: SessionCreate) => Promise<Session>;
-    list: () => Promise<Session[]>;
+    list: (params?: { limit?: number; offset?: number }) => Promise<SessionPage>;
     get: (id: string) => Promise<Session>;
-    run: (id: string) => Promise<{ session_id: string; status: string }>;
-    submitClarifications: (
+    /** Phase 1 SSE chat: returns the raw Response so the caller can read
+     * the event stream off `response.body`. */
+    chat: (
       id: string,
-      answers: string[]
-    ) => Promise<{ session_id: string; status: string }>;
-    approvePlan: (id: string) => Promise<{ session_id: string; status: string }>;
-    report: (id: string) => Promise<Report>;
-    reportPdf: (id: string) => Promise<{ blob: Blob; filename: string }>;
-    streamUrl: (id: string, token: string) => string;
+      payload: ChatTurnPayload,
+      signal?: AbortSignal
+    ) => Promise<Response>;
+    /** Most-recent job for this session (404 if none). */
+    latestJob: (id: string) => Promise<ResearchJob>;
+    listJobs: (id: string) => Promise<ResearchJob[]>;
+    /** Follow-up chat history (post-report). */
+    listMessages: (id: string) => Promise<FollowupMessage[]>;
+    /** Post a follow-up message; returns the raw streaming Response. */
+    postMessage: (
+      id: string,
+      content: string,
+      signal?: AbortSignal
+    ) => Promise<Response>;
   };
-  chats: {
-    create: (payload: ChatCreate) => Promise<Chat>;
-    list: () => Promise<Chat[]>;
-    get: (id: string) => Promise<ChatWithMessages>;
-    addMessage: (id: string, payload: MessageCreate) => Promise<Message>;
+  jobs: {
+    get: (id: string) => Promise<ResearchJob>;
+    events: (id: string) => Promise<ResearchJobEvent[]>;
+    researchers: (id: string) => Promise<ResearcherResult[]>;
+    tasks: (id: string) => Promise<ResearchTask[]>;
+    reportPdf: (id: string) => Promise<{ blob: Blob; filename: string }>;
   };
 }
 
-function buildClient(
-  fetcher: Fetcher,
-  getToken: (() => Promise<string | null>) | null
-): ApiClient {
+function buildClient(fetcher: Fetcher, getToken: TokenSource): ApiClient {
   return {
     health: () => fetcher<Health>("/health"),
     me: {
@@ -122,33 +133,63 @@ function buildClient(
           method: "POST",
           body: JSON.stringify(payload),
         }),
-      list: () => fetcher<Session[]>("/sessions"),
+      list: (params) => {
+        const q = new URLSearchParams();
+        if (params?.limit != null) q.set("limit", String(params.limit));
+        if (params?.offset != null) q.set("offset", String(params.offset));
+        const qs = q.toString();
+        return fetcher<SessionPage>(`/sessions${qs ? `?${qs}` : ""}`);
+      },
       get: (id) => fetcher<Session>(`/sessions/${id}`),
-      run: (id) =>
-        fetcher<{ session_id: string; status: string }>(`/sessions/${id}/run`, {
+      chat: async (id, payload, signal) => {
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+          Accept: "text/event-stream",
+        };
+        if (getToken) {
+          const token = getToken();
+          if (token) headers.Authorization = `Bearer ${token}`;
+        }
+        return fetch(`${BASE_URL}/sessions/${id}/chat`, {
           method: "POST",
-        }),
-      submitClarifications: (id, answers) =>
-        fetcher<{ session_id: string; status: string }>(
-          `/sessions/${id}/clarifications`,
-          {
-            method: "POST",
-            body: JSON.stringify({ answers }),
-          }
-        ),
-      approvePlan: (id) =>
-        fetcher<{ session_id: string; status: string }>(
-          `/sessions/${id}/plan/approve`,
-          { method: "POST" }
-        ),
-      report: (id) => fetcher<Report>(`/sessions/${id}/report`),
+          headers,
+          body: JSON.stringify(payload),
+          signal,
+        });
+      },
+      latestJob: (id) => fetcher<ResearchJob>(`/sessions/${id}/job`),
+      listJobs: (id) => fetcher<ResearchJob[]>(`/sessions/${id}/jobs`),
+      listMessages: (id) =>
+        fetcher<FollowupMessage[]>(`/sessions/${id}/messages`),
+      postMessage: async (id, content, signal) => {
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+          Accept: "text/event-stream",
+        };
+        if (getToken) {
+          const token = getToken();
+          if (token) headers.Authorization = `Bearer ${token}`;
+        }
+        return fetch(`${BASE_URL}/sessions/${id}/messages`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ content }),
+          signal,
+        });
+      },
+    },
+    jobs: {
+      get: (id) => fetcher<ResearchJob>(`/jobs/${id}`),
+      events: (id) => fetcher<ResearchJobEvent[]>(`/jobs/${id}/events`),
+      researchers: (id) => fetcher<ResearcherResult[]>(`/jobs/${id}/researchers`),
+      tasks: (id) => fetcher<ResearchTask[]>(`/jobs/${id}/tasks`),
       reportPdf: async (id) => {
         const headers: Record<string, string> = { Accept: "application/pdf" };
         if (getToken) {
-          const token = await getToken();
+          const token = getToken();
           if (token) headers.Authorization = `Bearer ${token}`;
         }
-        const res = await fetch(`${BASE_URL}/sessions/${id}/report.pdf`, {
+        const res = await fetch(`${BASE_URL}/jobs/${id}/report.pdf`, {
           method: "GET",
           headers,
         });
@@ -170,28 +211,12 @@ function buildClient(
         const blob = await res.blob();
         return { blob, filename };
       },
-      streamUrl: (id, token) =>
-        `${BASE_URL}/sessions/${id}/stream?token=${encodeURIComponent(token)}`,
-    },
-    chats: {
-      create: (payload) =>
-        fetcher<Chat>("/chats", {
-          method: "POST",
-          body: JSON.stringify(payload),
-        }),
-      list: () => fetcher<Chat[]>("/chats"),
-      get: (id) => fetcher<ChatWithMessages>(`/chats/${id}`),
-      addMessage: (id, payload) =>
-        fetcher<Message>(`/chats/${id}/messages`, {
-          method: "POST",
-          body: JSON.stringify(payload),
-        }),
     },
   };
 }
 
 /**
- * Authed API hook — pulls a fresh Clerk JWT before every request.
+ * Authed API hook — attaches the stored JWT before every request.
  * Use inside dashboard / protected components.
  */
 export function useApi(): ApiClient {

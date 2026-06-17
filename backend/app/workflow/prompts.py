@@ -1,10 +1,11 @@
 """Prompts for the company-focused deep-research workflow.
 
-Adapted from research-assistant/deep_research/prompts.py:
 - Anchored to a target company (name + website) instead of generic topics.
-- Replaces the knowledge-base path with a company-website-first strategy.
-- Final report fills the 8 fixed ReportContent sections, not free-form markdown.
+- The final report is structured into 8 fixed sections (see REPORT_SECTIONS).
+  The writer fills each section from research findings via structured output;
+  a reviewer pass polishes section-by-section without changing the schema.
 """
+
 
 # ----- Section vocabulary -------------------------------------------------
 
@@ -41,7 +42,7 @@ clarify_with_user_instructions = """You are the intake gate for a company-resear
 - A target company (name + website)
 - An objective (what they want from this research)
 
-Your ONLY job: decide whether the objective is clear enough to begin research, or whether missing information would send the research in a fundamentally wrong direction.
+Your job: decide whether one or two short, well-targeted questions would meaningfully change how the research is scoped. If yes, ask them. If the objective is already concrete enough that any reasonable scoping leads to the same report, skip.
 
 ## Context
 
@@ -56,35 +57,29 @@ Conversation so far:
 
 Today's date: {date}
 
-## Decision rule
+## When to ask
 
-Apply this single test:
-> "Could two competent researchers read this objective and produce fundamentally different reports — not in style or depth, but in TOPIC or DIRECTION?"
+Ask when the objective is open-ended enough that a sales rep, an investor, and a product manager would each want a different cut of the same company. Concretely, ask if any of these are true:
 
-- If NO → set need_clarification = false.
-- If YES → identify the specific ambiguity and ask about ONLY that.
+1. **Audience is ambiguous** — the same company can be researched for outreach, partnership eval, competitive intel, investment, hiring, or due-diligence. Each yields a different report. If the objective doesn't tell you which, ask.
+2. **Scope is unbounded** — "everything about them", "what they do", "tell me about them". Ask which angle matters most.
+3. **Identity / entity ambiguity** — the name and website point at different things, or the objective references "that product / that competitor / the recent acquisition" with no way to identify it.
+4. **Contradictory goals** — the objective contains asks that can't both be satisfied at depth.
+5. **Time / geography unspecified when material** — "their expansion plans" without a region, "recent funding" without a timeframe, when the answer changes meaningfully.
 
-## Default: do NOT clarify
+If none of those hold and the objective already names a concrete angle (a specific product, a specific market, a clear use case), set need_clarification = false.
 
-We already know which company. The downstream planner scopes the rest. These are NOT reasons to ask:
-- Broad objectives ("learn about the company") — the planner will cover all 8 report sections.
-- Missing depth, length, or format preferences — the system handles those.
-- Open-ended but directionally clear objectives ("evaluate them as a partner", "prepare for outreach").
-- The user already answered an earlier clarification — don't re-ask.
+## When NOT to ask
 
-## The only valid reasons to clarify
+- **HARD RULE — single-round limit.** If <messages> already contains an AI message with `"type":"clarification"` AND any subsequent human message (typically prefixed `Clarification answer:`), set `need_clarification = false` immediately. One round only. Even if the answers feel partial, proceed — the planner can work with imperfect scoping.
+- The objective already specifies an audience and a focus ("draft cold-outreach talking points for their Head of RevOps about XYZ"). Don't ask for depth or format; the system handles those.
 
-Ask ONLY when one of these holds:
+## How to ask
 
-1. **Conflicting company identity** — the company name and website refer to different entities (e.g., "Acme Corp" but website is a personal blog).
-2. **Specific named entity missing** — the objective references "that competitor" / "the new product line" / "the recent acquisition" with no way to identify it from context.
-3. **Contradictory goals** — the objective contains conflicting asks that can't both be satisfied.
-
-## When you ask (rare)
-
-- 1-2 questions maximum (3 only if truly unavoidable).
-- Each question targets one specific ambiguity.
-- Provide 2-4 short suggested answers per question so the user can tap to select.
+- 1-2 questions, 3 only if truly unavoidable.
+- Each question targets ONE specific ambiguity.
+- Always provide 2-4 short, tappable suggested_answers per question. Make them concrete and mutually exclusive where possible (e.g. for audience: ["Sales outreach", "Partnership eval", "Competitive intel", "Investment due-diligence"]).
+- Keep questions short — one sentence. The user is glancing, not reading an essay.
 """
 
 
@@ -139,26 +134,20 @@ Company website: {website}
 
 Today's date: {date}
 
-## Report sections you must cover
-
-The final report has exactly these 8 sections — every subtopic in your plan must target one of them:
-
-{section_catalog}
-
 ## How to decide subtopic count
 
 Most company-research runs need 4-6 subtopics. Hard cap: 8.
 
-- Each subtopic owns one of the 8 sections. It is fine to skip a section in the plan (the supervisor can dispatch follow-ups), but you should cover the high-signal ones: company_overview, products_and_services, target_customers, business_signals.
+- Each subtopic is one independent thread of investigation. Pick angles the objective actually needs — coverage of the company, its products, its customers, its market signals, its risks, and any specific entities the user named.
 - Two subtopics must not return the same findings — keep them non-overlapping.
 - A subtopic must be independently researchable. No subtopic waits on another's result.
 
 ## Tool assignment per subtopic
 
-Set `tools` based on what the section needs:
-- "company_site" — section is best answered by the company's own pages (company_overview, products_and_services).
-- "web" — section needs external sources (business_signals, risks_and_challenges).
-- "both" — section benefits from both (target_customers, outreach_strategy).
+Set `tools` based on what the subtopic needs:
+- "company_site" — best answered by the company's own pages (about, products, pricing, blog).
+- "web" — needs external sources (news, funding, reviews, competitor mentions).
+- "both" — benefits from both perspectives.
 
 ## Priority per subtopic
 
@@ -173,13 +162,13 @@ A confident 2-3 sentence first-person note to the user, naming the actual angles
 
 # ----- Lead researcher / supervisor --------------------------------------
 
-lead_researcher_prompt = """You are the supervisor of a company-research team. Your target is {company_name} ({website}). You will receive a research brief and a structured plan, then dispatch researchers, evaluate results, and fill gaps until the 8 report sections are covered.
+lead_researcher_prompt = """You are the supervisor of a company-research team. Your target is {company_name} ({website}). You will receive a research brief and a structured plan, then dispatch researchers, evaluate results, and fill gaps until you have enough material for a strong final report.
 
 Today's date is {date}.
 
 ## Your tools
 
-1. **ConductResearch** — Dispatch a research task to a sub-agent. Provide complete, standalone instructions; the researcher cannot see the plan or other researchers' work. Always specify `tools_to_use` (company_site / web / both) and the target `section`.
+1. **ConductResearch** — Dispatch a research task to a sub-agent. Provide complete, standalone instructions; the researcher cannot see the plan or other researchers' work. Always specify `tools_to_use` (company_site / web / both).
 
 2. **ResearchComplete** — Call when coverage is sufficient. Stop calling new researchers once you can write a full report.
 
@@ -191,7 +180,6 @@ Today's date is {date}.
 
 For each subtopic in the plan, emit one ConductResearch call:
 - Copy the subtopic's tool assignment into `tools_to_use`.
-- Set `section` to the targeted report section.
 - Write standalone instructions: ALWAYS mention the company name and what to investigate. Anchor every query to {company_name}.
 
 Up to {max_concurrent_research_units} researchers run in parallel per round. Queue the rest.
@@ -200,14 +188,14 @@ Up to {max_concurrent_research_units} researchers run in parallel per round. Que
 
 When results come back:
 1. **Coverage** — did the researcher answer the subtopic? If shallow or off-topic, re-dispatch with sharper instructions.
-2. **Section completeness** — are all 8 sections supported by enough evidence? If a high-signal section (company_overview, products_and_services, target_customers, business_signals) is thin, dispatch a targeted follow-up.
+2. **Completeness** — is the picture supported by enough evidence to write the brief the user asked for? If a high-signal angle is thin (what the company does, who they sell to, recent traction), dispatch a targeted follow-up.
 3. **Contradictions** — if two researchers disagree, dispatch one to resolve the conflict.
-4. **Sufficiency** — could a writer produce all 8 sections from what you have? If yes, call ResearchComplete.
+4. **Sufficiency** — could a writer produce the report from what you have? If yes, call ResearchComplete.
 
 ### When to stop
 
 Call ResearchComplete when ANY of these holds:
-- All high-signal sections are well-supported.
+- The high-signal angles of the brief are well-supported.
 - You've used {max_researcher_iterations} iterations (hard cap).
 - Additional research would be redundant.
 
@@ -232,8 +220,6 @@ Today's date is {date}.
 {research_topic}
 </assignment>
 
-Target report section: **{section}**
-
 This is your ONLY task. Stay on {company_name}. Do not research unrelated companies or generic industry topics.
 
 ## Your tools
@@ -257,13 +243,13 @@ This is your ONLY task. Stay on {company_name}. Do not research unrelated compan
 - EVERY search query must be about {company_name}. Never search a generic topic ("AI in healthcare") without anchoring it to the company.
 - Include all relevant facts, data, dates, names, and source citations in your final response.
 - Flag contradictions between sources.
-- Note what you could NOT find — that becomes the "unknowns" section later.
+- Note what you could NOT find — explicit gaps belong in the final report.
 """
 
 
 # ----- Compression --------------------------------------------------------
 
-compress_research_system_prompt = """You are cleaning up raw research findings from a researcher who investigated {company_name}. Your job is to organise and deduplicate the findings while preserving ALL substantive information. A downstream writer will use your output to fill report sections.
+compress_research_system_prompt = """You are cleaning up raw research findings from a researcher who investigated {company_name}. Your job is to organise and deduplicate the findings while preserving ALL substantive information. A downstream writer will use your output to draft the final report.
 
 Today's date is {date}.
 
@@ -282,7 +268,7 @@ Today's date is {date}.
 Organised by theme. Each finding cited [N].
 
 ### Gaps and Limitations
-What the researcher could NOT find. These flow into the "unknowns" section of the report.
+What the researcher could NOT find. The writer will fold these into the report's "open questions / unknowns" coverage.
 
 ### Sources
 Sequential numbered list with NO gaps:

@@ -1,372 +1,299 @@
-import type { ReactNode } from "react";
+import { useMemo } from "react";
 
-import type { Report, ReportContent, ReportSection, Source } from "../../lib/types";
-import { SourceCitation } from "./SourceCitation";
+import type {
+  ReportContent,
+  ReportSection,
+  ResearchJob,
+  ResearchReportSection,
+  Source,
+} from "../../lib/types";
 
-type SectionKey = keyof ReportContent;
-
-interface SectionMeta {
-  key: Exclude<SectionKey, "sources">;
-  ordinal: string;
-  title: string;
-  /** How to render the section body when content is present. */
-  render: "prose" | "ordered-list" | "callout";
-  /** Shown when the section is empty or thin. */
-  emptyHint: string;
+interface Props {
+  job: ResearchJob;
 }
 
-const SECTIONS: SectionMeta[] = [
-  {
-    key: "company_overview",
-    ordinal: "01",
-    title: "Company overview",
-    render: "prose",
-    emptyHint:
-      "No overview could be drafted from the available sources. Re-run with a clearer objective or website.",
-  },
-  {
-    key: "products_and_services",
-    ordinal: "02",
-    title: "Products & services",
-    render: "prose",
-    emptyHint: "No product or service details surfaced in this pass.",
-  },
-  {
-    key: "target_customers",
-    ordinal: "03",
-    title: "Target customers",
-    render: "prose",
-    emptyHint: "No customer or segment information was found.",
-  },
-  {
-    key: "business_signals",
-    ordinal: "04",
-    title: "Business signals",
-    render: "prose",
-    emptyHint:
-      "No recent signals — funding, hiring, launches — surfaced for this company.",
-  },
-  {
-    key: "risks_and_challenges",
-    ordinal: "05",
-    title: "Risks & challenges",
-    render: "prose",
-    emptyHint: "No risks or challenges were surfaced.",
-  },
-  {
-    key: "discovery_questions",
-    ordinal: "06",
-    title: "Discovery questions",
-    render: "ordered-list",
-    emptyHint: "No discovery questions drafted yet.",
-  },
-  {
-    key: "outreach_strategy",
-    ordinal: "07",
-    title: "Outreach strategy",
-    render: "prose",
-    emptyHint: "No outreach strategy could be drafted from this brief.",
-  },
-  {
-    key: "unknowns",
-    ordinal: "08",
-    title: "Unknowns",
-    render: "callout",
-    emptyHint: "Nothing flagged — every required section was covered.",
-  },
+// Same order + render rules as the PDF template — keep these aligned with
+// `backend/app/services/pdf_export.py:_SECTION_LABELS`.
+const SECTIONS: readonly {
+  key: ResearchReportSection;
+  ordinal: string;
+  title: string;
+  kind: "prose" | "list" | "callout";
+}[] = [
+  { key: "company_overview", ordinal: "01", title: "Company overview", kind: "prose" },
+  { key: "products_and_services", ordinal: "02", title: "Products & services", kind: "prose" },
+  { key: "target_customers", ordinal: "03", title: "Target customers", kind: "prose" },
+  { key: "business_signals", ordinal: "04", title: "Business signals", kind: "prose" },
+  { key: "risks_and_challenges", ordinal: "05", title: "Risks & challenges", kind: "prose" },
+  { key: "discovery_questions", ordinal: "06", title: "Discovery questions", kind: "list" },
+  { key: "outreach_strategy", ordinal: "07", title: "Outreach strategy", kind: "prose" },
+  { key: "unknowns", ordinal: "08", title: "Unknowns", kind: "callout" },
 ];
 
-export function ReportView({ report }: { report: Report }) {
-  const sourcesById = new Map(report.content.sources.map((s) => [s.id, s]));
-  const sourceIndexById = new Map(
-    report.content.sources.map((s, i) => [s.id, i + 1])
-  );
+const CITATION_RE = /\[([a-zA-Z0-9_,\s-]+)\]/g;
 
-  return (
-    <div className="space-y-16 text-ink">
-      {SECTIONS.map((meta) => {
-        const section = report.content[meta.key];
-        return (
-          <SectionBlock
-            key={meta.key}
-            meta={meta}
-            section={section}
-            sourcesById={sourcesById}
-            sourceIndexById={sourceIndexById}
-          />
-        );
-      })}
-
-      <SourcesBlock sources={report.content.sources} />
-    </div>
-  );
-}
-
-function SectionBlock({
-  meta,
-  section,
-  sourcesById,
-  sourceIndexById,
-}: {
-  meta: SectionMeta;
-  section: ReportSection | undefined;
-  sourcesById: Map<string, Source>;
-  sourceIndexById: Map<string, number>;
-}) {
-  const empty = !section || !section.content.trim();
-  return (
-    <article aria-labelledby={`section-${meta.key}`}>
-      <SectionHead ordinal={meta.ordinal} title={meta.title} id={`section-${meta.key}`} />
-
-      {empty ? (
-        <EmptyHint
-          tone={meta.key === "unknowns" ? "good" : "neutral"}
-          message={meta.emptyHint}
-        />
-      ) : (
-        <SectionBody meta={meta} section={section!} />
-      )}
-
-      {!empty && section && section.source_ids.length > 0 && (
-        <CitationStrip
-          sourceIds={section.source_ids}
-          sourcesById={sourcesById}
-          sourceIndexById={sourceIndexById}
-        />
-      )}
-    </article>
-  );
-}
-
-function SectionHead({
-  ordinal,
-  title,
-  id,
-}: {
-  ordinal: string;
-  title: string;
-  id: string;
-}) {
-  return (
-    <header className="flex items-baseline gap-4 mb-5 pb-3 rule-b">
-      <span className="font-mono tabular-nums text-xs text-ink-faint/70 tracking-wider">
-        {ordinal}
-      </span>
-      <h3
-        id={id}
-        className="font-display text-2xl italic text-ink leading-tight"
-        style={{ fontVariationSettings: '"opsz" 144, "SOFT" 80, "WONK" 1' }}
-      >
-        {title}
-      </h3>
-    </header>
-  );
-}
-
-function SectionBody({
-  meta,
-  section,
-}: {
-  meta: SectionMeta;
-  section: ReportSection;
-}) {
-  const content = section.content.trim();
-
-  if (meta.render === "ordered-list") {
-    const items = splitIntoQuestions(content);
-    if (items.length <= 1) {
-      // Fall through to prose if we can't split — better that than mis-formatting.
-      return <Prose>{content}</Prose>;
+/**
+ * Renders a `ResearchJob`'s `final_report` (JSON-encoded `ReportContent`)
+ * as the editorial 8-section brief. Falls back to a "report payload
+ * corrupt" notice if the JSON can't be parsed.
+ */
+export function ReportView({ job }: Props) {
+  const parsed = useMemo<ReportContent | null>(() => {
+    if (!job.final_report) return null;
+    try {
+      const obj = JSON.parse(job.final_report) as ReportContent;
+      if (obj && typeof obj === "object" && "company_overview" in obj) return obj;
+      return null;
+    } catch {
+      return null;
     }
+  }, [job.final_report]);
+
+  if (!job.final_report) {
     return (
-      <ol className="space-y-4 list-none max-w-[68ch]">
-        {items.map((q, i) => (
-          <li
-            key={i}
-            className="flex items-baseline gap-4 text-[15px] text-ink/90 leading-[1.7]"
-          >
-            <span className="font-mono tabular-nums text-[0.6875rem] text-ink-faint/70 mt-1 shrink-0">
-              {String(i + 1).padStart(2, "0")}
-            </span>
-            <span>{q}</span>
-          </li>
-        ))}
-      </ol>
+      <p className="text-sm italic text-ink-faint">
+        Report not generated yet.
+      </p>
     );
   }
 
-  if (meta.render === "callout") {
+  if (!parsed) {
     return (
-      <div className="border-l-2 border-warn/50 pl-5 py-2 max-w-[68ch]">
-        <Prose className="text-ink-soft italic">{content}</Prose>
+      <div className="rounded-sm border border-bad/25 bg-bad/5 px-4 py-3">
+        <p className="font-mono text-[0.6875rem] uppercase tracking-eyebrow text-bad">
+          Report payload corrupt
+        </p>
+        <p className="mt-2 text-sm text-ink-soft">
+          The job stored a final_report value we couldn't parse as
+          ReportContent. Re-run research or check the backend logs.
+        </p>
       </div>
     );
   }
 
-  return <Prose>{content}</Prose>;
-}
+  const srcIndex = useMemo<Map<string, number>>(() => {
+    const map = new Map<string, number>();
+    parsed.sources.forEach((s, i) => map.set(s.id, i + 1));
+    return map;
+  }, [parsed.sources]);
 
-function Prose({
-  children,
-  className = "",
-}: {
-  children: ReactNode;
-  className?: string;
-}) {
-  // Reading-tuned: larger body, generous leading, comfortable measure.
   return (
-    <div
-      className={`text-[15px] text-ink/90 leading-[1.75] max-w-[68ch] whitespace-pre-line ${className}`}
-    >
-      {children}
-    </div>
+    <article className="space-y-10">
+      <header className="space-y-1">
+        <p className="font-mono text-[0.6875rem] uppercase tracking-eyebrow text-ink-faint">
+          Brief
+        </p>
+        <p className="text-xs text-ink-faint">
+          8 sections · {parsed.sources.length}{" "}
+          {parsed.sources.length === 1 ? "source" : "sources"}
+        </p>
+      </header>
+
+      {SECTIONS.map((s) => (
+        <SectionBlock
+          key={s.key}
+          ordinal={s.ordinal}
+          title={s.title}
+          section={parsed[s.key]}
+          kind={s.kind}
+          srcIndex={srcIndex}
+        />
+      ))}
+
+      <SourcesList sources={parsed.sources} />
+    </article>
   );
 }
 
-function EmptyHint({
-  tone,
-  message,
+function SectionBlock({
+  ordinal,
+  title,
+  section,
+  kind,
+  srcIndex,
 }: {
-  tone: "neutral" | "good";
-  message: string;
+  ordinal: string;
+  title: string;
+  section: ReportSection;
+  kind: "prose" | "list" | "callout";
+  srcIndex: Map<string, number>;
 }) {
-  const borderColor = tone === "good" ? "border-good/40" : "border-rule/20";
-  const dotColor = tone === "good" ? "bg-good" : "bg-ink-faint/40";
+  const body = (section.content || "").trim();
+
   return (
-    <div className={`flex items-start gap-3 border-l-2 ${borderColor} pl-4 py-1`}>
-      <span className={`mt-1.5 h-[5px] w-[5px] rounded-full ${dotColor}`} aria-hidden />
-      <p className="text-sm text-ink-faint italic max-w-prose">{message}</p>
-    </div>
+    <section className="space-y-3">
+      <h2 className="flex items-baseline gap-3 border-b border-rule/15 pb-2">
+        <span className="font-mono text-[0.6875rem] uppercase tracking-eyebrow text-accent">
+          {ordinal}
+        </span>
+        <span className="font-serif text-2xl text-ink">{title}</span>
+      </h2>
+
+      {body.length === 0 ? (
+        <p className="text-sm italic text-ink-faint">
+          No content surfaced for this section.
+        </p>
+      ) : kind === "list" ? (
+        <QuestionList text={body} srcIndex={srcIndex} />
+      ) : kind === "callout" ? (
+        <div className="border-l-2 border-accent/40 bg-accent/5 px-4 py-3">
+          <Paragraphs text={body} srcIndex={srcIndex} />
+        </div>
+      ) : (
+        <Paragraphs text={body} srcIndex={srcIndex} />
+      )}
+
+      {section.source_ids.length > 0 && (
+        <p className="flex flex-wrap items-center gap-2 pt-1 font-mono text-[0.625rem] uppercase tracking-eyebrow text-ink-faint">
+          <span>Cited</span>
+          {section.source_ids
+            .filter((sid) => srcIndex.has(sid))
+            .map((sid) => (
+              <span
+                key={sid}
+                className="rounded-full border border-rule/20 bg-bg px-2 py-0.5 text-ink-soft"
+              >
+                {String(srcIndex.get(sid)).padStart(2, "0")}
+              </span>
+            ))}
+        </p>
+      )}
+    </section>
   );
 }
 
-function CitationStrip({
-  sourceIds,
-  sourcesById,
-  sourceIndexById,
+function Paragraphs({
+  text,
+  srcIndex,
 }: {
-  sourceIds: string[];
-  sourcesById: Map<string, Source>;
-  sourceIndexById: Map<string, number>;
+  text: string;
+  srcIndex: Map<string, number>;
 }) {
-  const cited = sourceIds
-    .map((id) => sourcesById.get(id))
-    .filter((s): s is Source => Boolean(s));
-  if (cited.length === 0) return null;
+  const paras = text.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
   return (
-    <div className="mt-4 flex flex-wrap items-center gap-x-2 gap-y-1">
-      <span className="font-mono text-[0.625rem] uppercase tracking-wider text-ink-faint/70 mr-1">
-        Cited
-      </span>
-      {cited.map((s) => (
-        <SourceCitation key={s.id} source={s} index={sourceIndexById.get(s.id)} />
+    <div className="space-y-3 text-sm leading-relaxed text-ink-soft">
+      {paras.map((p, i) => (
+        <p key={i}>
+          <Cited text={p} srcIndex={srcIndex} />
+        </p>
       ))}
     </div>
   );
 }
 
-function SourcesBlock({ sources }: { sources: Source[] }) {
-  if (sources.length === 0) {
-    return (
-      <article>
-        <SectionHead ordinal="09" title="Sources" id="section-sources" />
-        <EmptyHint
-          tone="neutral"
-          message="No sources were retained for this brief."
-        />
-      </article>
-    );
-  }
+function QuestionList({
+  text,
+  srcIndex,
+}: {
+  text: string;
+  srcIndex: Map<string, number>;
+}) {
+  const lines = text
+    .split(/\n+/)
+    .map((line) => line.replace(/^\s*(?:\d+[.)]|[-•*])\s*/, "").trim())
+    .filter(Boolean);
+  const items =
+    lines.length > 1
+      ? lines
+      : text
+          .split("?")
+          .map((p) => p.trim())
+          .filter(Boolean)
+          .map((p) => (p.endsWith("?") ? p : `${p}?`));
   return (
-    <article>
-      <SectionHead ordinal="09" title="Sources" id="section-sources" />
-      <ol className="space-y-4">
-        {sources.map((s, i) => (
-          <li key={s.id} className="flex items-baseline gap-3">
-            <span className="font-mono tabular-nums text-[0.6875rem] text-ink-faint/70 shrink-0">
-              {String(i + 1).padStart(2, "0")}
+    <ol className="ml-5 list-decimal space-y-2 text-sm leading-relaxed text-ink-soft">
+      {items.map((q, i) => (
+        <li key={i}>
+          <Cited text={q} srcIndex={srcIndex} />
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function Cited({
+  text,
+  srcIndex,
+}: {
+  text: string;
+  srcIndex: Map<string, number>;
+}) {
+  const parts: (string | { ids: number[] })[] = [];
+  let last = 0;
+  for (const m of text.matchAll(CITATION_RE)) {
+    if (m.index === undefined) continue;
+    parts.push(text.slice(last, m.index));
+    const ids = m[1]
+      .split(",")
+      .map((x) => x.trim())
+      .filter(Boolean);
+    const known = ids
+      .map((sid) => srcIndex.get(sid))
+      .filter((n): n is number => typeof n === "number");
+    if (known.length > 0) {
+      parts.push({ ids: known });
+    } else {
+      parts.push(m[0]);
+    }
+    last = m.index + m[0].length;
+  }
+  parts.push(text.slice(last));
+  return (
+    <>
+      {parts.map((p, i) =>
+        typeof p === "string" ? (
+          <span key={i}>{p}</span>
+        ) : (
+          <sup
+            key={i}
+            className="ml-0.5 font-mono text-[0.6875rem] text-accent"
+          >
+            [{p.ids.map((n) => String(n).padStart(2, "0")).join(",")}]
+          </sup>
+        )
+      )}
+    </>
+  );
+}
+
+function SourcesList({ sources }: { sources: Source[] }) {
+  if (sources.length === 0) return null;
+  return (
+    <section className="space-y-3">
+      <h2 className="flex items-baseline gap-3 border-b border-rule/15 pb-2">
+        <span className="font-mono text-[0.6875rem] uppercase tracking-eyebrow text-accent">
+          09
+        </span>
+        <span className="font-serif text-2xl text-ink">Sources</span>
+      </h2>
+      <ol className="space-y-3 text-sm">
+        {sources.map((s, idx) => (
+          <li
+            key={s.id ?? s.url ?? idx}
+            className="flex gap-4 border-b border-rule/10 pb-3 last:border-b-0"
+          >
+            <span className="w-8 shrink-0 font-mono text-xs text-ink-faint">
+              {String(idx + 1).padStart(2, "0")}
             </span>
             <div className="min-w-0 flex-1">
               <a
                 href={s.url}
                 target="_blank"
-                rel="noreferrer"
-                className="text-sm text-ink hover:underline underline-offset-2 break-words"
+                rel="noopener noreferrer"
+                className="font-serif text-base text-ink hover:text-accent"
               >
                 {s.title || s.url}
               </a>
-              <p className="font-mono text-[0.625rem] uppercase tracking-wider text-ink-faint/70 mt-0.5 truncate">
-                {prettyHost(s.url)}
+              <p className="mt-1 font-mono text-[0.6875rem] text-ink-faint break-all">
+                {s.url}
               </p>
-              {s.snippet && (
-                <p className="text-xs text-ink-faint mt-1.5 max-w-prose leading-relaxed line-clamp-3">
-                  {s.snippet}
-                </p>
-              )}
+              {s.snippet ? (
+                <p className="mt-1 text-xs italic text-ink-soft">{s.snippet}</p>
+              ) : null}
             </div>
           </li>
         ))}
       </ol>
-    </article>
-  );
-}
-
-/**
- * Split a synthesizer-emitted "discovery questions" block into individual
- * questions. The LLM sometimes returns a numbered list, sometimes prose with
- * `?` delimiters — handle both.
- */
-function splitIntoQuestions(text: string): string[] {
-  // Prefer explicit numbered lines: "1." / "1)" / "- "
-  const lines = text
-    .split(/\n+/)
-    .map((l) => l.replace(/^\s*(?:\d+[.)]|[-•*])\s*/, "").trim())
-    .filter(Boolean);
-  if (lines.length > 1) return lines;
-
-  // Fall back to splitting on question marks.
-  const parts = text
-    .split(/\?\s*/)
-    .map((p) => p.trim())
-    .filter(Boolean);
-  return parts.map((p) => (p.endsWith("?") ? p : `${p}?`));
-}
-
-function prettyHost(url: string): string {
-  try {
-    return new URL(url).hostname.replace(/^www\./, "");
-  } catch {
-    return url;
-  }
-}
-
-/**
- * Pre-allocated skeleton matching the report's section rhythm. Use while the
- * workflow is running so the page doesn't reflow when the report arrives.
- */
-export function ReportSkeleton() {
-  return (
-    <div className="space-y-14" aria-busy>
-      {[...SECTIONS, { ordinal: "09", title: "Sources" }].map((meta, i) => (
-        <article key={i}>
-          <header className="flex items-baseline gap-3 mb-4 pb-2 rule-b">
-            <span className="font-mono tabular-nums text-xs text-ink-faint/70">
-              {meta.ordinal}
-            </span>
-            <h3
-              className="font-display text-xl italic text-ink-faint/60"
-              style={{ fontVariationSettings: '"opsz" 144, "SOFT" 80, "WONK" 1' }}
-            >
-              {meta.title}
-            </h3>
-          </header>
-          <div className="animate-pulse space-y-2 max-w-prose">
-            <div className="h-3 w-full bg-ink/8 rounded-sm" />
-            <div className="h-3 w-11/12 bg-ink/6 rounded-sm" />
-            <div className="h-3 w-3/4 bg-ink/5 rounded-sm" />
-          </div>
-        </article>
-      ))}
-    </div>
+    </section>
   );
 }

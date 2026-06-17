@@ -39,6 +39,43 @@ def _is_rate_limit(exc: BaseException) -> bool:
     return status == 429
 
 
+# Model families that reject non-default sampling parameters (`temperature`,
+# `top_p`, etc.) — currently GPT-5 and the o-series reasoning models. The
+# API returns a 400 with "Unsupported value: 'temperature' does not support
+# X with this model" if we send temperature on these.
+#
+# We compare against the bare model id (after any `org/` prefix the
+# GitHub-Models endpoint adds), so `openai/gpt-5-mini` is matched.
+_NO_TEMPERATURE_PREFIXES: tuple[str, ...] = (
+    "gpt-5",
+    "o1",
+    "o3",
+    "o4",
+)
+
+# Same families also accept a `reasoning_effort` knob ("minimal" | "low" |
+# "medium" | "high"). We force "minimal" by default so every LLM hop stays
+# fast — the supervisor and researcher agents already do their own
+# tool-driven reasoning, and the GPT-5 series' built-in chain-of-thought
+# burns 2-10x more tokens on top.
+_REASONING_PREFIXES: tuple[str, ...] = _NO_TEMPERATURE_PREFIXES
+
+
+def _bare_model_id(model_name: str) -> str:
+    """Strip an optional `org/` prefix (e.g. `openai/gpt-5` → `gpt-5`)."""
+    return model_name.rsplit("/", 1)[-1]
+
+
+def _model_accepts_temperature(model_name: str) -> bool:
+    bare = _bare_model_id(model_name)
+    return not any(bare.startswith(p) for p in _NO_TEMPERATURE_PREFIXES)
+
+
+def _model_takes_reasoning_effort(model_name: str) -> bool:
+    bare = _bare_model_id(model_name)
+    return any(bare.startswith(p) for p in _REASONING_PREFIXES)
+
+
 # Per-model context-window ceilings, used by token-limit recovery in
 # final_report. Keep in sync with what we actually deploy.
 MODEL_TOKEN_LIMITS: dict[str, int] = {
@@ -216,6 +253,48 @@ class _RotatingModel:
         assert last_exc is not None  # for type-checker
         raise last_exc
 
+    async def astream(self, messages: Any, *args: Any, **kwargs: Any):
+        """Token-stream variant of `ainvoke`. Rotates on 429 between
+        whole calls (not mid-stream — once a stream starts, we ride it
+        out or surface the error to the caller).
+        """
+        rotator = get_rotator()
+        model_name = self._base_kwargs.get("model", "?")
+        max_attempts = rotator.size if rotator else 1
+        max_attempts = min(max_attempts, 8)
+
+        last_exc: BaseException | None = None
+        for attempt in range(max_attempts):
+            if rotator is not None:
+                lease = await rotator.acquire()
+                api_key = lease.key
+            else:
+                lease = None
+                api_key = (
+                    self._base_kwargs.get("api_key")
+                    or get_settings().openai_api_key
+                    or "sk-missing"
+                )
+            try:
+                model = self._build(api_key)
+                async for chunk in model.astream(messages, *args, **kwargs):
+                    yield chunk
+                return
+            except Exception as exc:
+                if lease is not None and _is_rate_limit(exc):
+                    logger.warning(
+                        "rate limit on key %s (stream attempt %d/%d) — rotating",
+                        lease.short_id, attempt + 1, max_attempts,
+                    )
+                    await rotator.cool_down(lease)  # type: ignore[union-attr]
+                    last_exc = exc
+                    continue
+                logger.error("LLM stream failed [model=%s]: %s", model_name, str(exc)[:500])
+                raise
+
+        assert last_exc is not None
+        raise last_exc
+
 
 def _create_model(
     *,
@@ -230,10 +309,16 @@ def _create_model(
     is selected at call time by `_RotatingModel.ainvoke`.
     """
     settings = get_settings()
-    base_kwargs: dict[str, Any] = {
-        "model": model_name or settings.openai_model,
-        "temperature": temperature,
-    }
+    resolved_model = model_name or settings.openai_model
+    base_kwargs: dict[str, Any] = {"model": resolved_model}
+    # GPT-5 / o-series only accept the default temperature — sending one
+    # produces a 400. Drop it for those families; pass through otherwise.
+    if _model_accepts_temperature(resolved_model):
+        base_kwargs["temperature"] = temperature
+    if _model_takes_reasoning_effort(resolved_model):
+        # Skip the built-in chain-of-thought — the agents already drive
+        # their own iterative reasoning through tool calls.
+        base_kwargs["reasoning_effort"] = "minimal"
     if settings.openai_base_url:
         base_kwargs["base_url"] = settings.openai_base_url
     if max_tokens is not None:

@@ -1,19 +1,25 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 
-import { ApiError, useApi } from "../lib/api";
-import { shortId } from "../lib/format";
-import type { Chat, ChatWithMessages } from "../lib/types";
-import { Status, statusLabel, statusTone } from "../components/ui/Pill";
-import { ArtifactPanel, type ArtifactTab } from "../components/session/ArtifactPanel";
+import { useApi } from "../lib/api";
+import type { ClarificationQuestion, ResearchPlan } from "../lib/types";
+import {
+  ArtifactPanel,
+  type ArtifactFocus,
+} from "../components/session/ArtifactPanel";
 import { ChatPanel } from "../components/session/ChatPanel";
-import { useWorkflowStream, type RunPhase } from "../hooks/useWorkflowStream";
+import {
+  useWorkflowChat,
+  type ChatTurn,
+  type UserTurn,
+} from "../hooks/useWorkflowChat";
+import { useJob, useLatestJob } from "../hooks/useSessionStatus";
+import { useReportChat } from "../hooks/useReportChat";
 
 export default function SessionDetail() {
   const { id = "" } = useParams<{ id: string }>();
   const api = useApi();
-  const queryClient = useQueryClient();
 
   const session = useQuery({
     queryKey: ["session", id],
@@ -21,390 +27,313 @@ export default function SessionDetail() {
     enabled: id.length > 0,
   });
 
-  const [streamEnabled, setStreamEnabled] = useState(false);
+  // Phase 1 SSE chat (clarify → brief → plan). Once SSE delivers
+  // `plan_ready`, `chat.jobId` is populated and we flip into polling mode.
+  const chat = useWorkflowChat(id);
+
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [artifactOpen, setArtifactOpen] = useState(false);
+  const [focus, setFocus] = useState<ArtifactFocus>(null);
+
+  // On cold-load of an in-flight phase-1 session, subscribe to SSE so any
+  // retained events replay. Skip for `running` (phase-2) sessions to avoid
+  // racing with the background task on the same checkpoint.
   useEffect(() => {
     if (!session.data) return;
-    const live = (
-      [
-        "running",
-        "completed",
-        "awaiting_clarification",
-        "awaiting_plan_approval",
-      ] as const
-    ).includes(session.data.status as never);
-    if (live) setStreamEnabled(true);
-  }, [session.data]);
-
-  const stream = useWorkflowStream(id, streamEnabled);
-
-  const startRun = useMutation({
-    mutationFn: () => api.sessions.run(id),
-    onSuccess: () => {
-      setStreamEnabled(true);
-      setArtifactTab("plan");
-      setArtifactOpen(true);
-      queryClient.invalidateQueries({ queryKey: ["session", id] });
-    },
-  });
-
-  const submitClarifications = useMutation({
-    mutationFn: (answers: string[]) =>
-      api.sessions.submitClarifications(id, answers),
-    onSuccess: () => {
-      setStreamEnabled(true);
-      queryClient.invalidateQueries({ queryKey: ["session", id] });
-    },
-  });
-
-  const approvePlan = useMutation({
-    mutationFn: () => api.sessions.approvePlan(id),
-    onSuccess: () => {
-      setStreamEnabled(true);
-      queryClient.invalidateQueries({ queryKey: ["session", id] });
-    },
-  });
-
-  useEffect(() => {
-    if (stream.phase === "completed" || stream.phase === "failed") {
-      queryClient.invalidateQueries({ queryKey: ["session", id] });
-      queryClient.invalidateQueries({ queryKey: ["sessions"] });
+    if (chat.turns.length > 0 || chat.streaming) return;
+    if (session.data.status === "awaiting_clarification") {
+      void chat.subscribe();
     }
-  }, [stream.phase, queryClient, id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session.data?.status]);
 
-  const reportEnabled =
-    session.data?.status === "completed" || stream.phase === "completed";
-
-  const report = useQuery({
-    queryKey: ["session-report", id],
-    queryFn: () => api.sessions.report(id),
-    enabled: reportEnabled && id.length > 0,
-  });
-
-  const sessionChat = useQuery({
-    queryKey: ["session-chat", id],
-    enabled: reportEnabled && id.length > 0,
-    queryFn: async (): Promise<ChatWithMessages> => {
-      const list = await api.chats.list();
-      const existing: Chat | undefined = list.find((c) => c.session_id === id);
-      const chat =
-        existing ??
-        (await api.chats.create({
-          title: `Follow-up — ${session.data?.company_name ?? "briefing"}`,
-          session_id: id,
-        }));
-      return api.chats.get(chat.id);
-    },
-  });
-
-  // Effective phase = max(session.status, stream.phase). Treats the session
-  // as completed/failed even when the SSE event bus has no replay (revisit
-  // after backend restart or after channel wipe).
-  const phase: RunPhase = derivePhase(session.data?.status, stream.phase);
-
-  // Artifact panel state — open/closed, active tab, and resizable width.
-  const [artifactOpen, setArtifactOpen] = useState(true);
-  const [artifactTab, setArtifactTab] = useState<ArtifactTab>("plan");
-  const [artifactWidth, setArtifactWidth] = useState<number>(readArtifactWidth);
+  // SSE handed us a job_id with `plan_ready` — promote it so `useJob` polls.
   useEffect(() => {
-    window.localStorage.setItem("rc:artifact-width", String(artifactWidth));
-  }, [artifactWidth]);
+    if (chat.jobId && !jobId) setJobId(chat.jobId);
+  }, [chat.jobId, jobId]);
 
-  const dragStartRef = useRef<{ x: number; w: number } | null>(null);
-  const beginResize = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault();
-      dragStartRef.current = { x: e.clientX, w: artifactWidth };
-      document.body.style.cursor = "col-resize";
-      document.body.style.userSelect = "none";
+  // Cold-load: pick up the existing job (if any) so polling resumes
+  // without re-opening the SSE.
+  const latestJobQuery = useLatestJob(id, !!session.data);
+  useEffect(() => {
+    if (latestJobQuery.data?.id && !jobId) {
+      setJobId(latestJobQuery.data.id);
+    }
+  }, [latestJobQuery.data?.id, jobId]);
 
-      const onMove = (ev: MouseEvent) => {
-        const start = dragStartRef.current;
-        if (!start) return;
-        // Dragging the handle leftward grows the panel.
-        const next = start.w + (start.x - ev.clientX);
-        setArtifactWidth(clampWidth(next));
-      };
-      const onUp = () => {
-        dragStartRef.current = null;
-        document.body.style.cursor = "";
-        document.body.style.userSelect = "";
-        window.removeEventListener("mousemove", onMove);
-        window.removeEventListener("mouseup", onUp);
-      };
-      window.addEventListener("mousemove", onMove);
-      window.addEventListener("mouseup", onUp);
+  const jobQuery = useJob(jobId);
+  const job = jobQuery.data ?? latestJobQuery.data ?? null;
+
+  // Per-researcher rows — polled while the job runs. Drives the Sources
+  // block's subquery groups and source counts.
+  const researchersQuery = useQuery({
+    queryKey: ["job-researchers", jobId],
+    queryFn: () => api.jobs.researchers(jobId!),
+    enabled: !!jobId,
+    refetchInterval: () => {
+      const status = jobQuery.data?.status ?? latestJobQuery.data?.status;
+      if (status === "completed" || status === "failed") return false;
+      return 6000;
     },
-    [artifactWidth]
+  });
+  const researchers = researchersQuery.data ?? [];
+
+  // Plan: prefer the live SSE-delivered plan; fall back to parsing
+  // job.research_plan (the backend writes it at auto-spawn time). Makes
+  // cold-load on a `running` / `completed` session show the plan without
+  // re-opening SSE.
+  const plan = useMemo<ResearchPlan | null>(() => {
+    if (chat.plan) return chat.plan;
+    const raw = job?.research_plan;
+    if (!raw) return null;
+    try {
+      const obj = JSON.parse(raw) as ResearchPlan;
+      if (obj && Array.isArray(obj.subtopics)) return obj;
+    } catch {
+      // bad JSON in the DB — fall through
+    }
+    return null;
+  }, [chat.plan, job?.research_plan]);
+
+  // (auto-open moved below — it now waits on `initialLoading` clearing)
+
+  // Action handlers ------------------------------------------------------
+
+  const handleAnswers = useCallback(
+    (answers: string[], questions: ClarificationQuestion[]) => {
+      const lines = questions.map((q, i) => ({
+        question: q.question,
+        answer: answers[i] ?? "",
+      }));
+      const optimistic: UserTurn = {
+        role: "user",
+        kind: "answers",
+        lines,
+        at: new Date().toISOString(),
+      };
+      const joined = lines
+        .map((l) => `${l.question}\nClarification answer: ${l.answer}`)
+        .join("\n\n");
+      void chat.send({ kind: "answer", message: joined }, optimistic);
+    },
+    [chat]
   );
 
-  // Switch the panel's active tab when the report becomes available so the
-  // user doesn't have to manually flip from Plan → Report.
+  const handleOpenWorkspace = useCallback((target: ArtifactFocus) => {
+    setArtifactOpen(true);
+    setFocus(target);
+  }, []);
+
+  // Follow-up chat over the finished brief. Enabled only when the job
+  // has a final_report — the backend rejects POSTs otherwise.
+  const reportReady = !!job?.final_report && job?.status === "completed";
+  const reportChat = useReportChat(id, reportReady);
+
+  // Cold-load skeleton gate. The chat surface should show a loader (not
+  // a blank "Waiting for the agents…" line) until everything we'd
+  // synthesise into the feed has had a chance to settle:
+  //   1. Session row itself (so we know the company name + status).
+  //   2. If the session has progressed past `pending`, the latest job
+  //      lookup must finish — otherwise we briefly render a `pending`
+  //      surface for a non-pending session.
+  //   3. If the report is ready, the follow-up history fetch must finish
+  //      so we don't flash an empty composer below an empty feed.
+  const initialLoading =
+    session.isLoading ||
+    (!!session.data &&
+      session.data.status !== "pending" &&
+      latestJobQuery.isLoading) ||
+    (reportReady && reportChat.loading);
+
+  // Auto-open the artifact panel — but only once the cold-load skeleton
+  // has cleared. Without this gate, the artifact would pop open the
+  // instant `latestJob` resolved, while the chat side was still in its
+  // loading state, producing a staggered/jarring reveal.
   useEffect(() => {
-    if (phase === "completed" && artifactTab === "plan") {
-      setArtifactTab("report");
+    if (initialLoading) return;
+    if (plan || chat.jobId || job) setArtifactOpen(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plan, chat.jobId, job, initialLoading]);
+  const handleFollowupSend = useCallback(
+    (text: string) => reportChat.send(text),
+    [reportChat]
+  );
+
+  const phase = chat.phase;
+  const canStart =
+    !!session.data && phase === "idle" && session.data.status === "pending";
+
+  // Auto-start the run as soon as the page loads on a pending session.
+  // No human "Start research" click — we just kick the SSE off. Ref-guarded
+  // so it fires exactly once per mount.
+  const autoStartedRef = useRef(false);
+  useEffect(() => {
+    if (initialLoading) return;
+    if (!canStart) return;
+    if (autoStartedRef.current) return;
+    autoStartedRef.current = true;
+    void chat.send({ kind: "start" });
+  }, [canStart, initialLoading, chat.send]);
+
+  // Build the chat feed. Order:
+  //   1. Intro user message — always synthesized from the session row so
+  //      the user's original ask anchors the top of the feed (pending,
+  //      in-flight, or completed).
+  //   2. Live SSE turns from `useWorkflowChat` (node statuses,
+  //      clarifications, plan_ready, failed cards).
+  //   3. Cold-load synthesis for anything the live stream didn't deliver:
+  //      - Three "completed" phase-1 node_status markers when we have a
+  //        plan but no live node statuses (so the ticker can walk).
+  //      - A plan_ready card when the plan exists but no SSE delivered it.
+  //      - A report_ready document card the moment job.final_report lands.
+  //      - A failed card if the job ended badly.
+  const turns = useMemo<ChatTurn[]>(() => {
+    const out: ChatTurn[] = [];
+    const live = chat.turns;
+    const sessRow = session.data;
+
+    // Always synthesize the intro as the first turn — it's the user's
+    // own request (company + website + objective) and should anchor the
+    // top of the chat from the moment the page loads, whether the run is
+    // pending, mid-flight, or completed.
+    if (sessRow) {
+      out.push({
+        role: "user",
+        kind: "intro",
+        content: `Company: ${sessRow.company_name}\nWebsite: ${sessRow.website}\nObjective: ${sessRow.objective}`,
+        at: sessRow.created_at,
+      });
     }
-  }, [phase]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (session.isLoading) {
-    return <WorkspaceSkeleton />;
-  }
+    out.push(...live);
 
-  if (session.error || !session.data) {
-    return (
-      <div className="px-6 md:px-10 py-12">
-        <div className="border-l-2 border-bad/60 pl-4 py-2 max-w-lg">
-          <p className="font-mono text-xs uppercase tracking-wider text-bad mb-1">
-            Could not load brief
-          </p>
-          <p className="text-sm text-ink-soft">
-            {(session.error as ApiError | Error)?.message ?? "Brief not found"}
-          </p>
-          <button
-            onClick={() => session.refetch()}
-            disabled={session.isFetching}
-            className="btn-ghost mt-3 disabled:opacity-50"
-          >
-            {session.isFetching ? "Retrying…" : "Try again →"}
-          </button>
-        </div>
-      </div>
+    // Cold-load synthesis of phase-1 node statuses. If the session has
+    // progressed past phase 1 (we have a plan or a job) but SSE didn't
+    // replay any node_status events, fabricate three "completed" markers
+    // so the run-activity ticker has steps to walk. The ticker then
+    // derives phase-2 activity from `job` + `researchers` polling.
+    const hasNodeStatus = out.some(
+      (t) => t.role === "assistant" && t.kind === "node_status"
     );
-  }
+    if (!hasNodeStatus && (plan || job)) {
+      // Stagger the synthesized timestamps by 1ms each so sort-by-`at`
+      // (anywhere) preserves the same order the SSE would have produced.
+      const baseMs = sessRow ? Date.parse(sessRow.created_at) : 0;
+      const nodes = [
+        "clarify_with_user",
+        "write_research_brief",
+        "create_research_plan",
+      ] as const;
+      nodes.forEach((node, i) => {
+        out.push({
+          role: "assistant",
+          kind: "node_status",
+          node,
+          phase: "completed",
+          at: new Date(baseMs + i).toISOString(),
+        });
+      });
+    }
 
-  const s = session.data;
+    const hasPlanTurn = out.some(
+      (t) => t.role === "assistant" && t.kind === "plan_ready"
+    );
+    if (!hasPlanTurn && plan) {
+      out.push({
+        role: "assistant",
+        kind: "plan_ready",
+        plan,
+        acted: true,
+        at: job?.created_at ?? sessRow?.created_at ?? new Date(0).toISOString(),
+      });
+    }
 
-  const gridStyle: CSSProperties = {
-    "--artifact-w": `${artifactWidth}px`,
-  } as CSSProperties;
+    const hasReportTurn = out.some(
+      (t) => t.role === "assistant" && t.kind === "report_ready"
+    );
+    if (!hasReportTurn && job?.final_report) {
+      out.push({
+        role: "assistant",
+        kind: "report_ready",
+        title: deriveReportTitle(job.final_report, sessRow?.company_name ?? "Research brief"),
+        jobId: job.id,
+        at: job.updated_at ?? job.created_at,
+      });
+    }
+
+    const hasFailedTurn = out.some(
+      (t) => t.role === "assistant" && t.kind === "failed"
+    );
+    if (!hasFailedTurn && job?.status === "failed") {
+      out.push({
+        role: "assistant",
+        kind: "failed",
+        message: "Research run failed. Check the workspace for details.",
+        at: job.updated_at ?? job.created_at,
+      });
+    }
+
+    return out;
+  }, [chat.turns, plan, job, session.data]);
+
+  if (!id) return null;
 
   return (
+    // h-full inherits from DashboardLayout's bounded grid row. ChatPanel
+    // and ArtifactPanel both use `grid grid-rows-[auto_…_1fr_auto]`
+    // internally so their scroll regions are self-contained and the
+    // composer/sticky bottoms never get pushed off-screen.
     <div
-      style={gridStyle}
-      className={`h-screen md:h-[100dvh] grid grid-rows-[auto_1fr] grid-cols-1 ${
+      className={`grid h-full min-h-0 overflow-hidden bg-bg ${
         artifactOpen
-          ? "lg:grid-cols-[minmax(0,1fr)_var(--artifact-w)]"
-          : "lg:grid-cols-[minmax(0,1fr)_0px]"
+          ? "grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]"
+          : "grid-cols-1"
       }`}
     >
-      {/* Session hero (spans both columns) */}
-      <header className="col-span-full rule-b bg-bg/70 backdrop-blur sticky top-0 z-10">
-        <div className="px-5 sm:px-8 md:px-10 py-4 flex items-center justify-between gap-4 min-w-0">
-          <div className="min-w-0 flex items-baseline gap-3 flex-wrap">
-            <p className="eyebrow">№ {shortId(s.id, 6)}</p>
-            <h1
-              className="font-display text-lg sm:text-xl text-ink truncate"
-              style={{ fontVariationSettings: '"opsz" 144, "SOFT" 60' }}
-            >
-              {s.company_name}
-            </h1>
-            <span className="text-rule/30 hidden sm:inline">·</span>
-            <span
-              className="hidden sm:inline font-display italic text-base text-ink-soft truncate max-w-[28rem]"
-              style={{ fontVariationSettings: '"opsz" 144, "SOFT" 100' }}
-              title={s.objective}
-            >
-              {s.objective}
-            </span>
-          </div>
-          <div className="flex items-center gap-3 shrink-0">
-            <Status
-              tone={statusTone(s.status)}
-              pulse={s.status === "running"}
-            >
-              {statusLabel(s.status)}
-            </Status>
-            {!artifactOpen && (
-              <button
-                type="button"
-                onClick={() => setArtifactOpen(true)}
-                className="btn-ghost text-xs"
-              >
-                Show artifacts →
-              </button>
-            )}
-          </div>
-        </div>
-        {startRun.isError && (
-          <p className="px-5 sm:px-8 md:px-10 pb-3 -mt-1 text-xs text-bad font-mono uppercase tracking-wider">
-            {(startRun.error as ApiError | Error).message}
-          </p>
-        )}
-      </header>
+      <ChatPanel
+        companyName={session.data?.company_name ?? "Session"}
+        turns={turns}
+        phase={phase}
+        streaming={chat.streaming}
+        onAnswers={handleAnswers}
+        onOpenReport={() => handleOpenWorkspace("report")}
+        onOpenPlan={() => handleOpenWorkspace("plan")}
+        error={chat.error}
+        followupEnabled={reportReady}
+        followupTurns={reportChat.turns}
+        followupSending={reportChat.sending}
+        followupError={reportChat.error}
+        onFollowupSend={handleFollowupSend}
+        initialLoading={initialLoading}
+        job={job}
+        researchers={researchers}
+      />
 
-      {/* Center: chat */}
-      <section className="min-w-0 min-h-0 flex flex-col">
-        <ChatPanel
-          chat={sessionChat.data ?? null}
-          companyName={s.company_name}
-          sources={report.data?.content.sources ?? []}
-          report={report.data ?? null}
-          stream={stream}
-          phase={phase}
-          starting={startRun.isPending}
-          canStart={phase !== "running"}
-          onStart={() => startRun.mutate()}
-          onOpenReport={() => {
-            setArtifactTab("report");
-            setArtifactOpen(true);
-          }}
-          onApprovePlan={() => approvePlan.mutate()}
-          approvingPlan={approvePlan.isPending}
-          approvePlanError={
-            approvePlan.error
-              ? (approvePlan.error as ApiError | Error).message
-              : null
-          }
-          onOpenPlan={() => {
-            setArtifactTab("plan");
-            setArtifactOpen(true);
-          }}
-          onSubmitClarifications={(answers) =>
-            submitClarifications.mutate(answers)
-          }
-          submittingClarifications={submitClarifications.isPending}
-          clarificationError={
-            submitClarifications.error
-              ? (submitClarifications.error as ApiError | Error).message
-              : null
-          }
-        />
-      </section>
-
-      {/* Right: artifact panel (resizable). The drag handle is a thin column
-          on the left edge of the section. */}
-      <section
-        className={`min-h-0 hidden lg:flex relative ${
-          artifactOpen ? "" : "lg:overflow-hidden"
-        }`}
-      >
-        {artifactOpen && (
-          <button
-            type="button"
-            aria-label="Resize artifact panel"
-            onMouseDown={beginResize}
-            onDoubleClick={() => setArtifactWidth(DEFAULT_ARTIFACT_W)}
-            className="absolute left-0 top-0 bottom-0 w-1.5 -ml-px cursor-col-resize z-20 group"
-          >
-            <span className="block h-full w-px mx-auto bg-transparent group-hover:bg-accent/60 group-active:bg-accent transition-colors" />
-          </button>
-        )}
-        <div className="flex-1 min-w-0">
-          <ArtifactPanel
-            sessionId={id}
-            open={artifactOpen}
-            onClose={() => setArtifactOpen(false)}
-            activeTab={artifactTab}
-            onTabChange={setArtifactTab}
-            stream={stream}
-            onStart={() => startRun.mutate()}
-            starting={startRun.isPending}
-            startDisabled={phase === "running"}
-            onApprovePlan={() => approvePlan.mutate()}
-            approvingPlan={approvePlan.isPending}
-            approvePlanError={
-              approvePlan.error
-                ? (approvePlan.error as ApiError | Error).message
-                : null
-            }
-            report={report.data ?? null}
-            reportLoading={report.isLoading || report.isFetching}
-            reportError={reportEnabled ? report.error : null}
-            onRetryReport={() => report.refetch()}
-          />
-        </div>
-      </section>
-
-      {/* Mobile artifact drawer */}
-      {artifactOpen && (
-        <div className="lg:hidden fixed inset-0 z-30 bg-bg">
-          <div className="h-full flex flex-col">
-            <ArtifactPanel
-              sessionId={id}
-              open
-              onClose={() => setArtifactOpen(false)}
-              activeTab={artifactTab}
-              onTabChange={setArtifactTab}
-              stream={stream}
-              onStart={() => startRun.mutate()}
-              starting={startRun.isPending}
-              startDisabled={phase === "running"}
-              onApprovePlan={() => approvePlan.mutate()}
-              approvingPlan={approvePlan.isPending}
-              approvePlanError={
-                approvePlan.error
-                  ? (approvePlan.error as ApiError | Error).message
-                  : null
-              }
-              report={report.data ?? null}
-              reportLoading={report.isLoading || report.isFetching}
-              reportError={reportEnabled ? report.error : null}
-              onRetryReport={() => report.refetch()}
-            />
-          </div>
-        </div>
-      )}
+      <ArtifactPanel
+        sessionId={id}
+        open={artifactOpen}
+        onClose={() => setArtifactOpen(false)}
+        focus={focus}
+        onFocusHandled={() => setFocus(null)}
+        plan={plan}
+        job={job}
+        researchers={researchers}
+        phase={phase}
+        title={session.data?.company_name ?? "Workspace"}
+      />
     </div>
   );
 }
 
-const DEFAULT_ARTIFACT_W = 448;
-
-function readArtifactWidth(): number {
-  if (typeof window === "undefined") return DEFAULT_ARTIFACT_W;
-  const stored = Number(window.localStorage.getItem("rc:artifact-width"));
-  if (!Number.isFinite(stored) || stored <= 0) return DEFAULT_ARTIFACT_W;
-  return clampWidth(stored);
+/** Try to pull the first non-empty markdown heading off the report as a
+ * human-friendly title. Falls back to a sensible default. */
+function deriveReportTitle(rawJson: string, fallback: string): string {
+  try {
+    const parsed = JSON.parse(rawJson) as { company_overview?: { content?: string } };
+    const opening = parsed?.company_overview?.content?.split("\n")[0]?.trim();
+    if (opening && opening.length <= 140) return opening;
+  } catch {
+    // not structured JSON or no overview — fall through
+  }
+  return `${fallback} — research brief`;
 }
-
-function clampWidth(w: number): number {
-  const min = 352;
-  const max =
-    typeof window === "undefined"
-      ? 900
-      : Math.max(min, Math.floor(window.innerWidth * 0.7));
-  return Math.max(min, Math.min(max, Math.round(w)));
-}
-
-function derivePhase(
-  status: import("../lib/types").SessionStatus | undefined,
-  streamPhase: RunPhase
-): RunPhase {
-  // Terminal session states win — they're the persisted truth.
-  if (status === "completed") return "completed";
-  if (status === "failed") return "failed";
-
-  // Live SSE phase beats stored status while a run is in flight, except we
-  // still fall back to the stored awaiting_* status when SSE is idle (e.g. a
-  // revisit after backend restart with no event replay).
-  if (streamPhase !== "idle") return streamPhase;
-  if (status === "running") return "running";
-  if (status === "awaiting_clarification") return "awaiting_clarification";
-  if (status === "awaiting_plan_approval") return "awaiting_plan_approval";
-  return "idle";
-}
-
-function WorkspaceSkeleton() {
-  return (
-    <div className="h-screen flex flex-col">
-      <div className="rule-b px-8 py-4 animate-pulse" aria-busy>
-        <div className="h-3 w-24 bg-ink/10 rounded-sm mb-2" />
-        <div className="h-5 w-1/3 bg-ink/15 rounded-sm" />
-      </div>
-      <div className="flex-1 grid lg:grid-cols-[1fr_28rem]">
-        <div className="p-10 space-y-4 animate-pulse" aria-busy>
-          <div className="h-3 w-32 bg-ink/10 rounded-sm" />
-          <div className="h-8 w-3/4 bg-ink/15 rounded-sm" />
-          <div className="h-4 w-5/6 bg-ink/10 rounded-sm" />
-          <div className="h-4 w-4/6 bg-ink/10 rounded-sm" />
-        </div>
-        <div className="hidden lg:block bg-bg-elev/40 border-l border-rule/8 p-6 space-y-3 animate-pulse" aria-busy>
-          <div className="h-3 w-20 bg-ink/10 rounded-sm" />
-          <div className="h-4 w-1/2 bg-ink/15 rounded-sm" />
-          <div className="h-3 w-2/3 bg-ink/10 rounded-sm mt-6" />
-          <div className="h-3 w-2/3 bg-ink/10 rounded-sm" />
-        </div>
-      </div>
-    </div>
-  );
-}
-

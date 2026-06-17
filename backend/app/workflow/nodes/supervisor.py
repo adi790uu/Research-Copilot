@@ -18,6 +18,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command
 
 from app.core.config import get_settings
+from app.services import job_store
 from app.workflow.helpers import (
     _create_model,
     _get_notes_from_tool_calls,
@@ -96,9 +97,36 @@ async def supervisor_tools(state: SupervisorState, config: RunnableConfig) -> Co
 
     conduct_calls = [t for t in tool_calls if t["name"] == "ConductResearch"]
     if conduct_calls:
+        # `job_id` is baked into configurable by the service when the
+        # background task spawns (workflow_service._auto_spawn_job). If it
+        # ever shows up as None (e.g. someone calls the supervisor outside
+        # the normal phase-2 path), we silently skip the DB writes — the
+        # graph still runs.
+        job_id = (config or {}).get("configurable", {}).get("job_id")  # type: ignore[union-attr]
         try:
             allowed = conduct_calls[:max_units]
             overflow = conduct_calls[max_units:]
+
+            # Pre-flight: record each ConductResearch dispatch as a
+            # research_tasks row with status='running'. The frontend polls
+            # /jobs/{id}/tasks to render live progress chips. We persist
+            # BEFORE dispatching so the row appears while the researcher
+            # is still running, not after the fact.
+            task_ids: list[str | None] = [None] * len(allowed)
+            if job_id:
+                try:
+                    task_ids = list(
+                        await asyncio.gather(
+                            *[
+                                job_store.create_task(
+                                    job_id, tc["args"]["research_topic"]
+                                )
+                                for tc in allowed
+                            ]
+                        )
+                    )
+                except Exception as e:  # noqa: BLE001
+                    logger.debug("create_task failed for job %s: %s", job_id, e)
 
             results = await asyncio.gather(
                 *[
@@ -111,7 +139,6 @@ async def supervisor_tools(state: SupervisorState, config: RunnableConfig) -> Co
                                 ],
                                 "research_topic": tc["args"]["research_topic"],
                                 "tools_to_use": tc["args"].get("tools_to_use", "both"),
-                                "section": tc["args"].get("section", "company_overview"),
                                 "company_name": state.get("company_name", ""),
                                 "website": state.get("website", ""),
                             },
@@ -127,6 +154,43 @@ async def supervisor_tools(state: SupervisorState, config: RunnableConfig) -> Co
                     for tc in allowed
                 ]
             )
+
+            # Persist per-researcher results + flip task status. This is
+            # the right layer to own these writes: supervisor has both the
+            # tool_call args (topic) and the subgraph result (sources +
+            # summary) without any indirection. Failures don't block the
+            # graph — we just log and continue.
+            if job_id:
+                try:
+                    await asyncio.gather(
+                        *[
+                            job_store.append_researcher_result(
+                                job_id=job_id,
+                                topic=tc["args"]["research_topic"],
+                                summary=result.get("compressed_research", ""),
+                                sources=[
+                                    s.model_dump(mode="json")
+                                    if hasattr(s, "model_dump")
+                                    else dict(s)
+                                    for s in (result.get("sources", []) or [])
+                                ],
+                            )
+                            for result, tc in zip(results, allowed)
+                        ]
+                    )
+                    await asyncio.gather(
+                        *[
+                            job_store.complete_task(tid)
+                            for tid in task_ids
+                            if tid
+                        ]
+                    )
+                except Exception as e:  # noqa: BLE001
+                    logger.debug(
+                        "persist researcher results failed for job %s: %s",
+                        job_id,
+                        e,
+                    )
 
             for result, tc in zip(results, allowed):
                 all_tool_messages.append(
@@ -152,7 +216,8 @@ async def supervisor_tools(state: SupervisorState, config: RunnableConfig) -> Co
                     )
                 )
 
-            # Aggregate sources + raw notes across researchers.
+            # Aggregate sources + raw notes across researchers (for the
+            # final report writer's context).
             aggregated_sources: list[Source] = []
             for r in results:
                 for s in r.get("sources", []) or []:
@@ -168,6 +233,19 @@ async def supervisor_tools(state: SupervisorState, config: RunnableConfig) -> Co
 
         except Exception as e:  # noqa: BLE001 — token-limit overflow drains gracefully
             logger.exception("supervisor researcher dispatch failed")
+            # Mark any still-pending tasks as failed so the UI doesn't
+            # show them spinning forever.
+            if job_id:
+                try:
+                    await asyncio.gather(
+                        *[
+                            job_store.fail_task(tid)
+                            for tid in (locals().get("task_ids") or [])
+                            if tid
+                        ]
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
             if _is_token_limit_exceeded(e):
                 return Command(
                     goto=END,

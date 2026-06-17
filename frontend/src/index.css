@@ -60,7 +60,35 @@ html {
 html,
 body,
 #root {
-  min-height: 100vh;
+  height: 100%;
+}
+
+html {
+  overscroll-behavior: none;
+}
+
+/* Kill webkit's default blue focus glow on form controls — we manage
+ * focus affordances per-component (background lift, accent text, etc). */
+textarea,
+input,
+select,
+button {
+  outline: none;
+}
+
+textarea:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+/* Reset webkit autofill yellow/blue tint on dark surfaces. */
+textarea:-webkit-autofill,
+input:-webkit-autofill {
+  -webkit-text-fill-color: rgb(var(--ink));
+  -webkit-box-shadow: 0 0 0px 1000px rgb(var(--bg-elev)) inset;
+  caret-color: rgb(var(--ink));
 }
 
 body {
@@ -106,6 +134,7 @@ body::after {
   z-index: 1;
   display: flex;
   flex-direction: column;
+  min-height: 0;
 }
 
 ::selection {
@@ -283,6 +312,58 @@ body::after {
 @keyframes cursor-blink {
   0%, 50% { opacity: 1; }
   50.01%, 100% { opacity: 0; }
+}
+
+/* Editorial loader — a filament being drawn. */
+@keyframes filament-draw {
+  0% {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+  18% { opacity: 1; }
+  82% { opacity: 1; }
+  100% {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+}
+
+@keyframes halo-breathe {
+  0%, 100% { opacity: 0.35; transform: scale(0.96); }
+  50%     { opacity: 0.7;  transform: scale(1.04); }
+}
+
+/* Each caption owns the first 25% of the cycle:
+ *   0–5%   fade in
+ *   5–20%  hold visible
+ *  20–25%  fade out
+ *  25–100% stay hidden (other captions take their turn)
+ * `both` fill mode keeps elements at opacity 0 during their initial delay. */
+/* Soft reveal used when the cold-load skeleton hands off to real content. */
+@keyframes panel-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.panel-reveal {
+  animation: panel-reveal 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel-reveal { animation: none; }
+}
+
+@keyframes caption-rotate {
+  0%        { opacity: 0; transform: translateY(4px); }
+  5%        { opacity: 1; transform: translateY(0); }
+  20%       { opacity: 1; transform: translateY(0); }
+  25%, 100% { opacity: 0; transform: translateY(-4px); }
 }
 
 @media (prefers-reduced-motion: reduce) {

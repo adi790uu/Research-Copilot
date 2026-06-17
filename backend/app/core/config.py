@@ -24,9 +24,13 @@ class Settings(BaseSettings):
     openai_key_cooldown_seconds: float = Field(default=60.0)
     tavily_api_key: str = Field(default="")
 
-    # Auth (Clerk). Without these set, every protected endpoint returns 401.
-    clerk_secret_key: str = Field(default="")
-    clerk_publishable_key: str = Field(default="")
+    # Auth — server-issued HS256 JWTs. `jwt_secret` MUST be set in any
+    # non-dev environment; the default is intentionally bad so a missing
+    # secret fails loudly in code review rather than silently in prod.
+    jwt_secret: str = Field(default="dev-only-change-me")
+    jwt_algorithm: str = Field(default="HS256")
+    jwt_issuer: str = Field(default="research-copilot")
+    jwt_expires_minutes: int = Field(default=60 * 24 * 14)  # 14 days
 
     # Canonical Postgres URL in psycopg form (postgresql://...).
     # The LangGraph checkpointer consumes this URL directly.

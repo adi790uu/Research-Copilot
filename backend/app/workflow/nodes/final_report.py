@@ -2,6 +2,10 @@
 
 Pass 1: structured_output(ReportContent) — fills all 8 sections directly.
 Pass 2: per-section reviewer pass that re-checks citation IDs and tightens prose.
+
+The result lands in `state["report"]` as a `ReportContent` instance; the
+service layer JSON-encodes it for the `research_jobs.final_report` Text
+column.
 """
 
 from __future__ import annotations
@@ -58,7 +62,8 @@ async def final_report_generation(state: AgentState, config: RunnableConfig) -> 
     )
     truncation_attempts = 0
     findings_text = findings
-    while True:
+    draft: ReportContent | None = None
+    while truncation_attempts <= 3:
         prompt = final_report_generation_prompt.format(
             company_name=company_name,
             website=website,
@@ -80,10 +85,19 @@ async def final_report_generation(state: AgentState, config: RunnableConfig) -> 
                 return {
                     "report": _fallback_report(
                         findings_text=findings_text, sources=sources, error=str(e)
-                    )
+                    ),
+                    "notes": {"type": "override", "value": []},
                 }
             truncation_attempts += 1
             findings_text = findings_text[: int(len(findings_text) * 0.7)] or findings_text[:5000]
+
+    if draft is None:
+        return {
+            "report": _fallback_report(
+                findings_text=findings_text, sources=sources, error="empty draft"
+            ),
+            "notes": {"type": "override", "value": []},
+        }
 
     # Drop any source IDs the writer hallucinated.
     for name in REPORT_SECTIONS:
@@ -124,9 +138,7 @@ async def final_report_generation(state: AgentState, config: RunnableConfig) -> 
     polished_pairs = await asyncio.gather(*[_review_one(n) for n in REPORT_SECTIONS])
     polished_map = dict(polished_pairs)
 
-    final = draft.model_copy(
-        update={**polished_map, "sources": sources},
-    )
+    final = draft.model_copy(update={**polished_map, "sources": sources})
 
     return {
         "report": final,

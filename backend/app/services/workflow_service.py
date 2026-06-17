@@ -1,22 +1,29 @@
 """Orchestrates a company-research run.
 
-Drives the LangGraph in three phases:
-  1. `start_run` kicks off a background task. The graph either pauses at
-     clarify_with_user (ClarificationRequested) or hits interrupt_after at
-     create_research_plan (PlanReady).
-  2. `submit_clarifications` resumes after a clarification pause by injecting
-     the user's answers and re-driving the same thread.
-  3. `approve_plan` resumes after the plan_ready interrupt and runs the rest
-     of the graph (supervisor + final_report) to completion.
+Two phases:
+
+1. **Phase 1 (foreground)** — clarify → brief → plan. Drives the graph
+   inline so the caller can stream events out as SSE. Closes when the
+   graph pauses (clarification needed, or `interrupt_after=create_research_plan`)
+   or terminates.
+
+2. **Phase 2 (background)** — supervisor + final_report. Kicked off by
+   `approve_plan`, which creates a `ResearchJob` row and spawns an
+   asyncio task that resumes the checkpoint and persists progress to the
+   DB via `job_store`. The frontend polls `/jobs/{id}` until the job is
+   completed or failed.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import time
+from collections.abc import AsyncIterator
 from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from app.core.config import get_settings
@@ -24,15 +31,18 @@ from app.core.errors import AppError, NotFoundError
 from app.core.logging import get_logger
 from app.domain.events import (
     ClarificationRequested,
+    NodeCompleted,
+    NodeName,
+    NodeStarted,
     PlanReady,
-    ReportReady,
     RunFailed,
     RunStarted,
+    WorkflowEvent,
 )
 from app.persistence.db import get_sessionmaker
-from app.persistence.repositories import ReportRepository, SessionRepository
+from app.persistence.repositories import SessionRepository
 from app.providers.factory import build_providers
-from app.services.event_bus import WorkflowEventBus
+from app.services import background, job_store
 from app.workflow.deps import WorkflowDeps
 from app.workflow.graph import build_graph
 
@@ -44,264 +54,390 @@ class RunAlreadyInFlightError(AppError):
     code = "run_already_in_flight"
 
 
+_PHASE1_NODES = {
+    "clarify_with_user",
+    "write_research_brief",
+    "create_research_plan",
+}
+
+
 class WorkflowService:
     """One instance per process; bound to app.state."""
 
-    def __init__(self, *, bus: WorkflowEventBus, checkpointer: BaseCheckpointSaver) -> None:
-        self._bus = bus
+    def __init__(self, *, checkpointer: BaseCheckpointSaver) -> None:
         self._checkpointer = checkpointer
-        self._tasks: dict[str, asyncio.Task[None]] = {}
+        # Tracks background jobs per session so the same session can't kick
+        # off two phase-2 runs concurrently.
+        self._bg_tasks: dict[str, asyncio.Task[None]] = {}
 
-    def is_running(self, session_id: str) -> bool:
-        task = self._tasks.get(session_id)
-        return task is not None and not task.done()
+    # ----- builders ---------------------------------------------------------
 
-    # ----- public entry points ----------------------------------------------
+    def _build(
+        self, *, session_id: str, company_name: str, website: str
+    ) -> tuple[Any, RunnableConfig]:
+        """Build the LangGraph + RunnableConfig for a session in lockstep.
 
-    async def start_run(self, *, session_id: str, user_id: str) -> None:
-        if self.is_running(session_id):
-            raise RunAlreadyInFlightError(f"Run for session {session_id} is already in flight")
-
-        sessionmaker = get_sessionmaker()
-        async with sessionmaker() as db:
-            repo = SessionRepository(db, user_id)
-            row = await repo.get(session_id)
-            if row is None:
-                raise NotFoundError(f"Session {session_id} not found")
-            company_name = row.company_name
-            website = row.website
-            objective = row.objective
-            await repo.set_status(session_id, "running")
-            await db.commit()
-
-        await self._bus.reset(session_id)
-        self._spawn(
-            session_id=session_id,
-            user_id=user_id,
-            kind="initial",
-            extra={
-                "company_name": company_name,
-                "website": website,
-                "objective": objective,
-            },
-        )
-
-    async def submit_clarifications(
-        self, *, session_id: str, user_id: str, answers: list[str]
-    ) -> None:
-        """Resume after a clarification pause by re-running with the user's answers
-        appended to the original message thread."""
-        if self.is_running(session_id):
-            raise RunAlreadyInFlightError(f"Run for session {session_id} is already in flight")
-
-        sessionmaker = get_sessionmaker()
-        async with sessionmaker() as db:
-            repo = SessionRepository(db, user_id)
-            row = await repo.get(session_id)
-            if row is None:
-                raise NotFoundError(f"Session {session_id} not found")
-            company_name = row.company_name
-            website = row.website
-            objective = row.objective
-            await repo.set_status(session_id, "running")
-            await db.commit()
-
-        await self._bus.reset(session_id)
-        self._spawn(
-            session_id=session_id,
-            user_id=user_id,
-            kind="initial",
-            extra={
-                "company_name": company_name,
-                "website": website,
-                "objective": objective,
-                "clarification_answers": answers,
-            },
-        )
-
-    async def approve_plan(self, *, session_id: str, user_id: str) -> None:
-        """Resume after the create_research_plan interrupt; finishes the run."""
-        if self.is_running(session_id):
-            raise RunAlreadyInFlightError(f"Run for session {session_id} is already in flight")
-
-        sessionmaker = get_sessionmaker()
-        async with sessionmaker() as db:
-            repo = SessionRepository(db, user_id)
-            row = await repo.get(session_id)
-            if row is None:
-                raise NotFoundError(f"Session {session_id} not found")
-            await repo.set_status(session_id, "running")
-            await db.commit()
-
-        # Do NOT bus.reset — keep the prior events so the SSE replay still has
-        # the run_started/plan_ready timeline.
-        self._spawn(session_id=session_id, user_id=user_id, kind="resume", extra={})
-
-    # ----- internals --------------------------------------------------------
-
-    def _spawn(
-        self, *, session_id: str, user_id: str, kind: str, extra: dict[str, Any]
-    ) -> None:
-        task = asyncio.create_task(
-            self._run(session_id=session_id, user_id=user_id, kind=kind, extra=extra),
-            name=f"workflow-{session_id}",
-        )
-        self._tasks[session_id] = task
-        task.add_done_callback(lambda t: self._tasks.pop(session_id, None))
-
-    async def _run(
-        self,
-        *,
-        session_id: str,
-        user_id: str,
-        kind: str,
-        extra: dict[str, Any],
-    ) -> None:
+        The search provider lives in two places at once: on `WorkflowDeps`
+        (so the graph's `_bind` wrapper can reach it for emit/etc.) and
+        inside `config.configurable.search_provider` (so the researcher's
+        Tavily-backed tools can pull it out at tool-call time via
+        `LangChain`'s injected `RunnableConfig`). Both references point at
+        the same provider instance — that's why we build them together
+        here instead of two separate methods.
+        """
         settings = get_settings()
-        company_name = extra.get("company_name", "")
         llm, search = build_providers(settings, company_hint=company_name)
-        deps = WorkflowDeps(llm=llm, search=search, emit=self._bus.publish)
+        deps = WorkflowDeps(llm=llm, search=search)
         graph = build_graph(deps, checkpointer=self._checkpointer)
-
-        runnable_config = {
+        config: RunnableConfig = {
             "configurable": {
                 "thread_id": session_id,
+                # Tools read this off configurable. Forgetting it = every
+                # researcher errors with "company_site_search is not
+                # configured (missing search provider …)".
                 "search_provider": search,
                 "company_name": company_name,
-                "website": extra.get("website", ""),
+                "website": website,
                 "allow_clarification": settings.workflow_allow_clarification,
             }
         }
+        return graph, config
 
-        if kind == "initial":
-            await self._bus.publish(RunStarted(session_id=session_id))
-            seed = self._initial_messages(extra)
-            initial_state: dict[str, Any] = {
-                "messages": seed,
-                "session_id": session_id,
-                "company_name": company_name,
-                "website": extra.get("website", ""),
-                "objective": extra.get("objective", ""),
-                "supervisor_messages": {"type": "override", "value": []},
-                "notes": {"type": "override", "value": []},
-                "raw_notes": {"type": "override", "value": []},
-            }
-            try:
-                await graph.ainvoke(initial_state, config=runnable_config)
-            except Exception as exc:  # noqa: BLE001
-                log.exception("workflow_run_failed", session_id=session_id)
-                await self._fail(session_id, user_id, str(exc))
-                return
-        elif kind == "resume":
-            try:
-                await graph.ainvoke(None, config=runnable_config)
-            except Exception as exc:  # noqa: BLE001
-                log.exception("workflow_resume_failed", session_id=session_id)
-                await self._fail(session_id, user_id, str(exc))
-                return
-        else:
-            await self._fail(session_id, user_id, f"unknown run kind {kind}")
-            return
+    # ----- session lookup ---------------------------------------------------
 
-        # Where did we land?
-        try:
-            snapshot = await graph.aget_state(runnable_config)
-        except Exception as exc:  # noqa: BLE001
-            log.exception("aget_state failed", session_id=session_id)
-            await self._fail(session_id, user_id, str(exc))
-            return
-
-        next_nodes = snapshot.next if snapshot else ()
-        values: dict[str, Any] = (snapshot.values if snapshot else {}) or {}
-
-        # Interrupt at create_research_plan -> emit PlanReady, auto-approve if configured.
-        if next_nodes and "research_supervisor" in next_nodes:
-            # `research_plan` is now stored as a plain dict (see state.py and
-            # nodes/research_plan.py) — no model_dump needed.
-            plan = values.get("research_plan") or {}
-            await self._bus.publish(PlanReady(session_id=session_id, plan=plan))
-
-            if settings.workflow_auto_approve_plan:
-                # Continue immediately on the same thread.
-                try:
-                    await graph.ainvoke(None, config=runnable_config)
-                except Exception as exc:  # noqa: BLE001
-                    log.exception("auto-approve resume failed", session_id=session_id)
-                    await self._fail(session_id, user_id, str(exc))
-                    return
-                # Re-fetch state for the final branch below.
-                snapshot = await graph.aget_state(runnable_config)
-                values = (snapshot.values if snapshot else {}) or {}
-                next_nodes = snapshot.next if snapshot else ()
-            else:
-                await self._set_status(session_id, user_id, "awaiting_plan_approval")
-                return
-
-        # Clarification path: graph ended without producing a report; last AIMessage
-        # carries the clarification JSON.
-        if values.get("report") is None and not next_nodes:
-            clarification = _extract_clarification(values)
-            if clarification is not None:
-                await self._bus.publish(
-                    ClarificationRequested(session_id=session_id, questions=clarification)
-                )
-                await self._set_status(session_id, user_id, "awaiting_clarification")
-                return
-            await self._fail(session_id, user_id, "Workflow ended without a report or clarification")
-            return
-
-        # Terminal success path.
-        report_content = values.get("report")
-        if report_content is None:
-            await self._fail(session_id, user_id, "Workflow finished without a report")
-            return
-
+    async def _load_session(self, *, session_id: str, user_id: str) -> tuple[str, str, str]:
         sessionmaker = get_sessionmaker()
         async with sessionmaker() as db:
-            sessions = SessionRepository(db, user_id)
-            owned = await sessions.get(session_id)
-            if owned is None:
-                await self._fail(session_id, user_id, "Session disappeared mid-run")
-                return
-            reports = ReportRepository(db)
-            row = await reports.upsert(
-                session_id=session_id, content=report_content.model_dump(mode="json")
-            )
-            await sessions.set_status(session_id, "completed")
-            await db.commit()
-            report_id = row.id
+            row = await SessionRepository(db, user_id).get(session_id)
+            if row is None:
+                raise NotFoundError(f"Session {session_id} not found")
+            return row.company_name, row.website, row.objective
 
-        await self._bus.publish(ReportReady(session_id=session_id, report_id=report_id))
-
-    def _initial_messages(self, extra: dict[str, Any]) -> list[Any]:
-        company_name = extra.get("company_name", "")
-        website = extra.get("website", "")
-        objective = extra.get("objective", "")
-        intro = (
-            f"Company: {company_name}\n"
-            f"Website: {website}\n"
-            f"Objective: {objective}"
-        )
-        msgs: list[Any] = [HumanMessage(content=intro)]
-        for ans in extra.get("clarification_answers", []) or []:
-            msgs.append(HumanMessage(content=ans))
-        return msgs
-
-    async def _set_status(self, session_id: str, user_id: str, status: str) -> None:
+    async def _set_status(self, *, session_id: str, user_id: str, status: str) -> None:
         sessionmaker = get_sessionmaker()
         async with sessionmaker() as db:
             await SessionRepository(db, user_id).set_status(session_id, status)
             await db.commit()
 
-    async def _fail(self, session_id: str, user_id: str, message: str) -> None:
-        await self._set_status(session_id, user_id, "failed")
-        await self._bus.publish(RunFailed(session_id=session_id, message=message))
+    # ----- phase 1 (foreground) --------------------------------------------
+
+    async def run_phase1(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        message: str | None = None,
+    ) -> AsyncIterator[WorkflowEvent]:
+        """Drive phase 1 (clarify → brief → plan), yielding events as they happen.
+
+        `message` is the user's turn:
+        - `None` on the first call (the seed Company/Website/Objective message
+          is built from the session row).
+        - A clarification answer on subsequent calls; appended as a new
+          HumanMessage to the checkpointed history.
+
+        Stops when the graph pauses at:
+        - `clarify_with_user` (ClarificationRequested)
+        - `create_research_plan` (PlanReady, via interrupt_after)
+        - Or terminates with `final_report` already set (unlikely in phase 1).
+        """
+        company_name, website, objective = await self._load_session(
+            session_id=session_id, user_id=user_id
+        )
+        graph, config = self._build(
+            session_id=session_id, company_name=company_name, website=website
+        )
+
+        await self._set_status(session_id=session_id, user_id=user_id, status="running")
+
+        # Build the input to ainvoke based on whether this is the first turn.
+        input_state: dict[str, Any] | None
+        if message is None:
+            snapshot = await graph.aget_state(config)
+            has_prior = bool(snapshot and snapshot.values)
+            if has_prior:
+                # Resume an in-progress run without injecting a new message —
+                # treat as a "subscribe" so we don't double-seed.
+                input_state = None
+            else:
+                intro = (
+                    f"Company: {company_name}\n"
+                    f"Website: {website}\n"
+                    f"Objective: {objective}"
+                )
+                input_state = {
+                    "messages": [HumanMessage(content=intro)],
+                    "session_id": session_id,
+                    "company_name": company_name,
+                    "website": website,
+                    "objective": objective,
+                    "supervisor_messages": {"type": "override", "value": []},
+                    "notes": {"type": "override", "value": []},
+                    "raw_notes": {"type": "override", "value": []},
+                }
+        else:
+            input_state = {"messages": [HumanMessage(content=message.strip())]}
+
+        return _phase1_event_iter(
+            graph=graph,
+            config=config,
+            input_state=input_state,
+            session_id=session_id,
+            user_id=user_id,
+            set_status=self._set_status,
+            auto_spawn_job=self._auto_spawn_job,
+        )
+
+    # ----- phase 2 (background) ---------------------------------------------
+
+    async def _auto_spawn_job(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        graph: Any,
+        config: RunnableConfig,
+    ) -> str:
+        """Create a research_jobs row and spawn the background task.
+
+        Single source of truth for phase-2 kickoff. Called by `_phase1_event_iter`
+        at the `interrupt_after` boundary and by `approve_plan` (legacy, unused
+        from the API today).
+
+        Raises if a job is already in flight for this session, if the DB
+        insert fails, or if scheduling the task fails. Callers wrap the
+        failure path so the user sees a clear error.
+        """
+        existing = self._bg_tasks.get(session_id)
+        if existing is not None and not existing.done():
+            raise RunAlreadyInFlightError(
+                f"Session {session_id} already has a background job in flight"
+            )
+
+        # Read the plan off the checkpoint so we can persist it on the job row.
+        snapshot = await graph.aget_state(config)
+        values: dict[str, Any] = (snapshot.values if snapshot else {}) or {}
+        plan = values.get("research_plan") or {}
+        plan_text = json.dumps(plan)
+
+        job_id = await job_store.create_job(
+            session_id=session_id, user_id=user_id, research_plan=plan_text
+        )
+
+        # Thread the job_id through the supervisor's RunnableConfig so it
+        # can write `research_tasks` rows + per-researcher results directly
+        # (matches research-assistant's pattern, supervisor.py:98). Build a
+        # fresh dict so we don't mutate the caller's config object.
+        bg_config: RunnableConfig = {
+            **config,
+            "configurable": {
+                **(config.get("configurable") or {}),
+                "job_id": job_id,
+            },
+        }
+
+        task = asyncio.create_task(
+            background.run_background_job(job_id, graph, bg_config),
+            name=f"job-{job_id}",
+        )
+        self._bg_tasks[session_id] = task
+
+        def _on_done(t: asyncio.Task[None]) -> None:
+            self._bg_tasks.pop(session_id, None)
+            # Reflect the job's terminal state on the session.
+            asyncio.create_task(
+                self._sync_session_from_job(
+                    session_id=session_id, user_id=user_id, job_id=job_id
+                )
+            )
+
+        task.add_done_callback(_on_done)
+        return job_id
+
+    async def approve_plan(self, *, session_id: str, user_id: str) -> str:
+        """Spawn a background ResearchJob that runs supervisor + final_report.
+
+        Returns the `job_id`. Kept for API compatibility but no longer wired
+        into any route — phase 2 now auto-spawns from the SSE handler. Will
+        be removed once we're sure manual approval isn't coming back.
+        """
+        company_name, website, _ = await self._load_session(
+            session_id=session_id, user_id=user_id
+        )
+        graph, config = self._build(
+            session_id=session_id, company_name=company_name, website=website
+        )
+        job_id = await self._auto_spawn_job(
+            session_id=session_id, user_id=user_id, graph=graph, config=config
+        )
+        await self._set_status(session_id=session_id, user_id=user_id, status="running")
+        return job_id
+
+    async def _sync_session_from_job(
+        self, *, session_id: str, user_id: str, job_id: str
+    ) -> None:
+        job = await job_store.get_job(job_id)
+        if not job:
+            return
+        status_map = {"completed": "completed", "failed": "failed"}
+        new_status = status_map.get(job.get("status", ""), "running")
+        await self._set_status(
+            session_id=session_id, user_id=user_id, status=new_status
+        )
+
+    # ----- plan editing (no run) -------------------------------------------
+
+    async def save_plan_edits(
+        self, *, session_id: str, user_id: str, plan: dict[str, Any]
+    ) -> dict[str, Any]:
+        sessionmaker = get_sessionmaker()
+        async with sessionmaker() as db:
+            repo = SessionRepository(db, user_id)
+            row = await repo.get(session_id)
+            if row is None:
+                raise NotFoundError(f"Session {session_id} not found")
+            if row.status != "awaiting_plan_approval":
+                raise AppError(
+                    f"Plan can only be edited while awaiting approval; "
+                    f"current status: {row.status}"
+                )
+            company_name = row.company_name
+            website = row.website
+
+        graph, config = self._build(
+            session_id=session_id, company_name=company_name, website=website
+        )
+        await graph.aupdate_state(config, {"research_plan": plan})
+        return plan
 
 
-def _extract_clarification(values: dict[str, Any]) -> list[dict[str, Any]] | None:
-    """If the graph terminated at clarify_with_user, the last AI message holds a
-    JSON payload `{"type":"clarification","questions":[...]}`."""
-    messages = values.get("messages", []) or []
+# ---------- phase-1 streaming generator -------------------------------------
+
+
+async def _phase1_event_iter(
+    *,
+    graph: Any,
+    config: RunnableConfig,
+    input_state: dict[str, Any] | None,
+    session_id: str,
+    user_id: str,
+    set_status: Any,
+    auto_spawn_job: Any,
+) -> AsyncIterator[WorkflowEvent]:
+    """Stream phase-1 events from the LangGraph.
+
+    Tails `astream(stream_mode="updates")` and emits a `NodeStarted` +
+    `NodeCompleted` pair per phase-1 node update. The stream stops when:
+      - The graph reaches `interrupt_after=[create_research_plan]`. The
+        generator immediately auto-spawns the phase-2 background job (via
+        the `auto_spawn_job` callable injected by the service), then yields
+        `PlanReady{plan, job_id}` and closes. If auto-spawn fails (DB
+        write, task scheduling), `RunFailed` is yielded instead and the
+        session is marked failed.
+      - `clarify_with_user` ends the run with a clarification marker.
+      - Or it raises, in which case RunFailed is yielded.
+    """
+    yield RunStarted(session_id=session_id)
+    started = time.perf_counter()
+    clarification_emitted = False
+
+    try:
+        async for stream_data in graph.astream(input_state, config, stream_mode="updates"):
+            if not isinstance(stream_data, dict):
+                continue
+            for node_key, node_update in stream_data.items():
+                if node_key not in _PHASE1_NODES:
+                    continue
+                node_name: NodeName = node_key  # type: ignore[assignment]
+                yield NodeStarted(session_id=session_id, node=node_name)
+                elapsed_ms = int((time.perf_counter() - started) * 1000)
+                yield NodeCompleted(
+                    session_id=session_id,
+                    node=node_name,
+                    duration_ms=max(0, elapsed_ms),
+                )
+                started = time.perf_counter()
+
+                if (
+                    node_key == "clarify_with_user"
+                    and isinstance(node_update, dict)
+                    and not clarification_emitted
+                ):
+                    marker = _extract_clarify_marker(node_update.get("messages") or [])
+                    if marker and marker.get("type") == "clarification":
+                        clarification_emitted = True
+                        yield ClarificationRequested(
+                            session_id=session_id,
+                            questions=list(marker.get("questions", []) or []),
+                        )
+                        await set_status(
+                            session_id=session_id,
+                            user_id=user_id,
+                            status="awaiting_clarification",
+                        )
+                        return
+    except Exception as exc:  # noqa: BLE001
+        log.exception("phase1_failed", session_id=session_id)
+        await set_status(session_id=session_id, user_id=user_id, status="failed")
+        yield RunFailed(session_id=session_id, message=str(exc))
+        return
+
+    # Stream ended — figure out where we landed.
+    try:
+        snapshot = await graph.aget_state(config)
+    except Exception as exc:  # noqa: BLE001
+        log.exception("phase1_aget_state_failed", session_id=session_id)
+        await set_status(session_id=session_id, user_id=user_id, status="failed")
+        yield RunFailed(session_id=session_id, message=str(exc))
+        return
+
+    next_nodes = snapshot.next if snapshot else ()
+    values: dict[str, Any] = (snapshot.values if snapshot else {}) or {}
+
+    if next_nodes and "research_supervisor" in next_nodes:
+        plan = values.get("research_plan") or {}
+        # Auto-spawn the phase-2 background job. If anything goes wrong here
+        # (DB insert, task scheduling), tell the user the research failed
+        # instead of yielding PlanReady to a job that doesn't exist.
+        try:
+            job_id = await auto_spawn_job(
+                session_id=session_id,
+                user_id=user_id,
+                graph=graph,
+                config=config,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.exception("phase1_auto_spawn_failed", session_id=session_id)
+            await set_status(session_id=session_id, user_id=user_id, status="failed")
+            yield RunFailed(
+                session_id=session_id,
+                message=f"Could not start research: {exc}",
+            )
+            return
+        await set_status(session_id=session_id, user_id=user_id, status="running")
+        yield PlanReady(session_id=session_id, plan=plan, job_id=job_id)
+        return
+
+    # Graph terminated without hitting plan or clarification — either
+    # clarification already handled (we returned above) or something
+    # unexpected. Surface the last AI message for visibility.
+    marker = _extract_clarify_marker(values.get("messages") or [])
+    if marker and marker.get("type") == "clarification" and not clarification_emitted:
+        yield ClarificationRequested(
+            session_id=session_id,
+            questions=list(marker.get("questions", []) or []),
+        )
+        await set_status(
+            session_id=session_id, user_id=user_id, status="awaiting_clarification"
+        )
+        return
+
+    # Should not happen in phase 1, but don't deadlock the stream.
+    await set_status(session_id=session_id, user_id=user_id, status="failed")
+    yield RunFailed(session_id=session_id, message="Phase 1 ended in an unexpected state")
+
+
+def _extract_clarify_marker(messages: list) -> dict[str, Any] | None:
     for msg in reversed(messages):
         if isinstance(msg, AIMessage):
             content = msg.content if isinstance(msg.content, str) else None
@@ -312,6 +448,6 @@ def _extract_clarification(values: dict[str, Any]) -> list[dict[str, Any]] | Non
             except (json.JSONDecodeError, TypeError):
                 return None
             if isinstance(parsed, dict) and parsed.get("type") == "clarification":
-                return list(parsed.get("questions", []) or [])
+                return parsed
             return None
     return None

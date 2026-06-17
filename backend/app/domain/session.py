@@ -29,3 +29,13 @@ class Session(BaseModel):
     status: SessionStatus
     created_at: datetime
     updated_at: datetime
+
+
+class SessionPage(BaseModel):
+    """Paginated session list. `total` is the unfiltered count so the
+    frontend can render a page count without a second round-trip."""
+
+    items: list[Session]
+    total: int
+    limit: int
+    offset: int

@@ -62,12 +62,24 @@ def _source_id_for(url: str) -> str:
     return f"src_{hashlib.sha1(url.encode()).hexdigest()[:8]}"
 
 
+def _normalize_source_type(stype: str) -> str | None:
+    """Map the regex-captured `Type:` field back to our SourceType literal.
+
+    `company_site_search` writes `Type: company_site` and
+    `web_company_search` writes `Type: web` — see workflow/tools/research.py.
+    """
+    s = (stype or "").strip().lower()
+    if s in {"company_site", "web"}:
+        return s
+    return None
+
+
 def _extract_sources_from_messages(messages: list) -> list[Source]:
     sources: list[Source] = []
     seen: set[str] = set()
     for msg in filter_messages(messages, include_types=["tool"]):
         content = msg.content if isinstance(msg.content, str) else ""
-        for title, url, _stype in _SOURCE_PATTERN.findall(content):
+        for title, url, stype in _SOURCE_PATTERN.findall(content):
             if url in seen:
                 continue
             seen.add(url)
@@ -77,6 +89,7 @@ def _extract_sources_from_messages(messages: list) -> list[Source]:
                     url=url.strip(),
                     title=title.strip(),
                     snippet=None,
+                    type=_normalize_source_type(stype),  # type: ignore[arg-type]
                 )
             )
     return sources
@@ -128,7 +141,6 @@ async def researcher(
         company_name=state.get("company_name", ""),
         website=state.get("website", ""),
         research_topic=state.get("research_topic", ""),
-        section=state.get("section", "company_overview"),
         tools_section=tools_section,
         tool_routing=tool_routing,
         date=_get_today_str(),

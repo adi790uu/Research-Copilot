@@ -8,6 +8,14 @@ Topology:
                                             └─[interrupt_after]─► research_supervisor
                                                                   └─► final_report_generation
                                                                         └─► END
+
+The `interrupt_after=["create_research_plan"]` boundary is NOT a
+human-approval gate. It exists so the phase-1 SSE handler can close the
+stream after delivering `plan_ready`; the service then auto-spawns
+`research_supervisor → final_report_generation` as a background asyncio
+task and the frontend transitions to polling. See
+`services/workflow_service.py:_phase1_event_iter` and
+`services/background.py`.
 """
 
 from __future__ import annotations
@@ -91,6 +99,8 @@ def build_graph(
     )
 
     builder.add_edge(START, "clarify_with_user")
+    # clarify routes via Command(goto=...) — no explicit edge needed for its
+    # two terminal paths (END on clarification, write_research_brief on go).
     builder.add_edge("write_research_brief", "create_research_plan")
     builder.add_edge("create_research_plan", "research_supervisor")
     builder.add_edge("research_supervisor", "final_report_generation")

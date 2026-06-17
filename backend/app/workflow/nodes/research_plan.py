@@ -1,7 +1,8 @@
 """Research plan node.
 
-Produces an ordered list of subtopics, each mapped to one of the 8 fixed
-report sections plus a tool routing hint (company_site / web / both).
+Produces an ordered list of subtopics, each with a tool routing hint
+(company_site / web / both). The supervisor turns each subtopic into a
+ConductResearch dispatch.
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
 
 from app.workflow.helpers import _create_model, _get_today_str
-from app.workflow.prompts import research_plan_prompt, section_catalog
+from app.workflow.prompts import research_plan_prompt
 from app.workflow.state import AgentState, ResearchPlan
 
 
@@ -20,7 +21,7 @@ def _render_plan(plan: ResearchPlan) -> str:
     lines = [f"## Strategy\n{plan.strategy_summary}", "", "## Subtopics"]
     for i, st in enumerate(plan.subtopics, 1):
         lines.append(
-            f"{i}. [{st.priority.upper()}] [{st.tools.upper()}] -> {st.section} :: {st.title}\n"
+            f"{i}. [{st.priority.upper()}] [{st.tools.upper()}] :: {st.title}\n"
             f"   {st.description}"
         )
     return "\n".join(lines)
@@ -35,7 +36,6 @@ async def create_research_plan(state: AgentState, config: RunnableConfig) -> dic
         company_name=state.get("company_name", ""),
         website=state.get("website", ""),
         research_brief=state.get("research_brief", ""),
-        section_catalog=section_catalog(),
         date=_get_today_str(),
     )
 

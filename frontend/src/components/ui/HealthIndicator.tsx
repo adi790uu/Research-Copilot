@@ -6,7 +6,12 @@ export function HealthIndicator() {
   const health = useQuery({
     queryKey: ["health"],
     queryFn: publicApi.health,
-    refetchInterval: 15_000,
+    // One-shot check on mount; no recurring pings.
+    refetchInterval: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    staleTime: Infinity,
+    gcTime: Infinity,
   });
 
   let dotClass = "bg-ink-faint animate-pulse-dot";

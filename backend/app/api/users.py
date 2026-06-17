@@ -14,7 +14,7 @@ async def get_me(
     db: AsyncSession = Depends(get_db_session),
     user: CurrentUser = Depends(get_current_user),
 ) -> User:
-    return await UserService(db).ensure_user(user)
+    return await UserService(db).me(user)
 
 
 @router.get("/activity", response_model=ActivitySummary)

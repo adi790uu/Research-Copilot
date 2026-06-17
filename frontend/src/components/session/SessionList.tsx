@@ -9,19 +9,20 @@ import { Status, statusTone } from "../ui/Pill";
 export function SessionList() {
   const api = useApi();
   const sessions = useQuery({
-    queryKey: ["sessions"],
-    queryFn: api.sessions.list,
+    queryKey: ["sessions", { limit: 50, offset: 0 }],
+    queryFn: () => api.sessions.list({ limit: 50, offset: 0 }),
   });
 
   if (sessions.isLoading) return <SkeletonList />;
   if (sessions.error)
     return <ErrorState error={sessions.error} onRetry={() => sessions.refetch()} />;
-  if (!sessions.data || sessions.data.length === 0) return <EmptyState />;
+  const items = sessions.data?.items ?? [];
+  if (items.length === 0) return <EmptyState />;
 
   return (
     <ul className="rule-t">
-      {sessions.data.map((s, idx) => (
-        <SessionRow key={s.id} session={s} index={sessions.data!.length - idx} />
+      {items.map((s, idx) => (
+        <SessionRow key={s.id} session={s} index={items.length - idx} />
       ))}
     </ul>
   );

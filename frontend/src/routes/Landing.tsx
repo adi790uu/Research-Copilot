@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { SignedIn, SignedOut } from "@clerk/clerk-react";
+import { SignedIn, SignedOut } from "../lib/auth";
 
 import { MarketingShell } from "../components/marketing/MarketingShell";
 

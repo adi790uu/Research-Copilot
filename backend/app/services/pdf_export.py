@@ -1,8 +1,11 @@
 """Report → HTML → PDF rendering.
 
-WeasyPrint is loaded lazily so an import failure (missing Pango/Cairo libs on
-macOS, etc.) doesn't take the rest of the app down — the endpoint surfaces a
-clear 503 instead.
+Renders a structured `ReportContent` (8 sections + sources) as a
+print-styled, self-contained HTML document and then asks WeasyPrint to
+hand it back as PDF bytes.
+
+WeasyPrint is loaded lazily so a missing Pango/Cairo on macOS doesn't take
+the rest of the app down — the endpoint surfaces a clear 503 instead.
 """
 
 from __future__ import annotations
@@ -18,19 +21,7 @@ from app.domain.report import Report, ReportSection, Source
 
 
 def _bootstrap_native_libs() -> None:
-    """Make WeasyPrint's Pango/Cairo loads work on macOS + Homebrew.
-
-    The dynamic loader can't find Homebrew libs (they're not in /usr/lib or
-    the dyld cache), and WeasyPrint asks for them by their *Linux* SONAME
-    suffix (e.g. ``gobject-2.0-0``) which doesn't exist on macOS (the file is
-    ``libgobject-2.0.dylib``). Both problems are solved by monkey-patching
-    ``ctypes.util.find_library`` to fall back to Homebrew paths and to
-    normalize the suffix.
-
-    Linux/Docker doesn't need this — once ``libpango-1.0-0``,
-    ``libpangoft2-1.0-0``, ``libharfbuzz0b``, and ``libffi`` are apt-installed,
-    ``ldconfig``-managed paths cover everything WeasyPrint asks for.
-    """
+    """Make WeasyPrint's Pango/Cairo loads work on macOS + Homebrew."""
     if platform.system() != "Darwin":
         return
 
@@ -38,33 +29,17 @@ def _bootstrap_native_libs() -> None:
     if not prefixes:
         return
 
-    orig = ctypes.util.find_library
-    if getattr(orig, "_rc_patched", False):
-        return  # idempotent — survive module re-imports under reloaders
+    original = ctypes.util.find_library
 
     def _patched(name: str) -> str | None:
-        found = orig(name)
-        if found is not None:
-            return found
-        # WeasyPrint asks via cffi for names like "gobject-2.0" or
-        # "gobject-2.0-0"; Homebrew installs them as e.g.
-        # "libgobject-2.0.dylib" (canonical) and "libgobject-2.0.0.dylib"
-        # (versioned). Strip any trailing "-N" SONAME suffix when searching.
-        stripped = re.sub(r"-\d+$", "", name)
-        attempts = [
-            f"lib{name}.dylib",
-            f"lib{name}.0.dylib",
-            f"lib{stripped}.dylib",
-            f"lib{stripped}.0.dylib",
-        ]
+        base = name.split(".", 1)[0]
         for prefix in prefixes:
-            for fname in attempts:
-                path = os.path.join(prefix, fname)
-                if os.path.exists(path):
-                    return path
-        return None
+            for filename in (f"lib{base}.dylib", f"lib{name}.dylib"):
+                candidate = os.path.join(prefix, filename)
+                if os.path.isfile(candidate):
+                    return candidate
+        return original(name)
 
-    _patched._rc_patched = True  # type: ignore[attr-defined]
     ctypes.util.find_library = _patched  # type: ignore[assignment]
 
 
@@ -75,8 +50,11 @@ class PDFRenderError(RuntimeError):
     """Raised when WeasyPrint or its native deps can't render."""
 
 
+# (attr, ordinal, title, kind). `kind` controls the body render:
+#   - "prose": paragraphs.
+#   - "list":  numbered list of questions (with `?` boundary fallback).
+#   - "callout": prose inside a bordered callout box.
 _SECTION_LABELS: list[tuple[str, str, str, str]] = [
-    # (attr, ordinal, title, render-kind)
     ("company_overview", "01", "Company overview", "prose"),
     ("products_and_services", "02", "Products & services", "prose"),
     ("target_customers", "03", "Target customers", "prose"),
@@ -122,8 +100,7 @@ def report_to_pdf(
     company_name: str,
     objective: str,
 ) -> bytes:
-    """Render the report to a PDF byte string. Raises PDFRenderError if the
-    WeasyPrint native stack can't load."""
+    """Render the report to a PDF byte string."""
     try:
         from weasyprint import HTML  # type: ignore[import-untyped]
     except OSError as exc:  # pragma: no cover — env-dependent
@@ -173,15 +150,11 @@ def _section_html(
 ) -> str:
     body = (section.content or "").strip()
     if not body:
-        body_html = (
-            '<p class="empty">No content surfaced for this section.</p>'
-        )
+        body_html = '<p class="empty">No content surfaced for this section.</p>'
     elif kind == "list":
         items = _split_questions(body)
         if len(items) > 1:
-            lis = "\n".join(
-                f"<li>{_render_text(q, src_index)}</li>" for q in items
-            )
+            lis = "\n".join(f"<li>{_render_text(q, src_index)}</li>" for q in items)
             body_html = f'<ol class="qlist">{lis}</ol>'
         else:
             body_html = _render_paragraphs(body, src_index)
@@ -222,11 +195,7 @@ def _sources_html(sources: list[Source]) -> str:
         title = escape(s.title or s.url)
         url = escape(s.url)
         host = escape(_pretty_host(s.url))
-        snippet = (
-            f'<p class="snippet">{escape(s.snippet)}</p>'
-            if s.snippet
-            else ""
-        )
+        snippet = f'<p class="snippet">{escape(s.snippet)}</p>' if s.snippet else ""
         items.append(
             f"""
 <li>
@@ -260,7 +229,7 @@ def _render_paragraphs(text: str, src_index: dict[str, int]) -> str:
 
 
 def _render_text(text: str, src_index: dict[str, int]) -> str:
-    """Escape + transform [s1] / [s1,s2] markers into superscript citations."""
+    """Escape + transform [src_…] markers into superscript citation chips."""
     out: list[str] = []
     last = 0
     for m in _CITATION_RE.finditer(text):
@@ -279,7 +248,6 @@ def _render_text(text: str, src_index: dict[str, int]) -> str:
 
 
 def _split_questions(text: str) -> list[str]:
-    # Numbered or bulleted lines first.
     lines = [
         re.sub(r"^\s*(?:\d+[.)]|[-•*])\s*", "", line).strip()
         for line in re.split(r"\n+", text)
@@ -287,7 +255,6 @@ def _split_questions(text: str) -> list[str]:
     lines = [line for line in lines if line]
     if len(lines) > 1:
         return lines
-    # Fall back to splitting on `?`.
     parts = [p.strip() for p in text.split("?") if p.strip()]
     return [p if p.endswith("?") else f"{p}?" for p in parts]
 
@@ -357,253 +324,178 @@ _CSS = """
 * { box-sizing: border-box; }
 
 body {
-  font-family: "Georgia", "Times New Roman", serif;
-  font-size: 10.25pt;
-  line-height: 1.55;
+  font-family: "Helvetica Neue", "Helvetica", sans-serif;
   color: #1a1614;
+  line-height: 1.55;
+  font-size: 10.5pt;
   margin: 0;
 }
-
-.eyebrow {
-  font-family: "Helvetica", sans-serif;
-  font-size: 8pt;
-  font-weight: 500;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  color: #999;
-  margin: 0;
-}
-
-/* ---------- Cover ---------- */
 
 .cover {
   page-break-after: always;
-  padding-top: 34mm;
+  padding: 60mm 0 0;
+}
+.cover .eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 9pt;
+  color: #888;
+  margin: 0 0 8mm;
 }
 .cover h1 {
   font-family: "Georgia", serif;
-  font-size: 40pt;
-  font-weight: normal;
-  line-height: 1.05;
-  letter-spacing: -0.01em;
-  margin: 18mm 0 0 0;
+  font-size: 36pt;
+  margin: 0 0 6mm;
   color: #1a1614;
+  letter-spacing: -0.02em;
+  font-weight: 600;
 }
 .cover .objective {
-  font-style: italic;
   font-size: 14pt;
-  line-height: 1.4;
-  color: #4a3f37;
-  margin: 12mm 0 0 0;
-  max-width: 135mm;
+  color: #3a3530;
+  max-width: 130mm;
+  margin: 0 0 12mm;
 }
 .cover .meta {
-  margin: 38mm 0 0 0;
-  font-family: "Helvetica", sans-serif;
-  font-size: 8pt;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: #888;
-  padding-top: 6mm;
-  border-top: 0.3pt solid #cfcac1;
-  display: inline-block;
-  padding-right: 12mm;
+  font-family: "Geist Mono", "Menlo", monospace;
+  font-size: 8.5pt;
+  color: #8a847e;
+  letter-spacing: 0.05em;
 }
-
-/* ---------- Body sections ---------- */
 
 .rsec {
   page-break-inside: avoid;
-  margin-bottom: 12mm;
+  margin-top: 14mm;
 }
-
 .rsec h2 {
-  font-family: "Georgia", serif;
-  font-size: 18pt;
-  font-weight: normal;
-  font-style: italic;
-  color: #1a1614;
-  margin: 0 0 5mm 0;
-  padding-bottom: 2mm;
-  border-bottom: 0.4pt solid #d3cec4;
   display: flex;
   align-items: baseline;
-  gap: 7mm;
+  gap: 10pt;
+  margin: 0 0 5mm;
+  padding-bottom: 3mm;
+  border-bottom: 1px solid #d8d3cc;
+  font-family: "Georgia", serif;
+  font-size: 18pt;
+  font-weight: 600;
 }
 .rsec h2 .ord {
-  font-family: "Helvetica", sans-serif;
-  font-style: normal;
-  font-size: 9pt;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: #b46624;
-  flex-shrink: 0;
+  font-family: "Geist Mono", "Menlo", monospace;
+  font-size: 9.5pt;
+  letter-spacing: 0.1em;
+  color: #b8866e;
+  font-weight: 400;
 }
 .rsec h2 .t {
-  flex: 1;
+  color: #1a1614;
 }
-
-.rsec p {
-  margin: 0 0 3.5mm 0;
-  text-align: justify;
-  hyphens: auto;
-}
-
-.rsec .callout {
-  border-left: 1pt solid #c89a55;
-  padding: 1mm 0 1mm 5mm;
-  background: #faf6ec;
-  font-style: italic;
-  color: #5b4d36;
-  margin-bottom: 4mm;
-}
-.rsec .callout p {
-  text-align: left;
-}
-
-.rsec ol.qlist {
-  margin: 0;
-  padding-left: 0;
-  list-style: none;
-  counter-reset: qitem;
-}
-.rsec ol.qlist li {
-  counter-increment: qitem;
-  position: relative;
-  padding-left: 11mm;
-  margin-bottom: 3mm;
-}
-.rsec ol.qlist li::before {
-  content: counter(qitem, decimal-leading-zero);
-  position: absolute;
-  left: 0;
-  top: 1mm;
-  font-family: "Helvetica", sans-serif;
-  font-size: 8pt;
-  color: #999;
-  letter-spacing: 0.1em;
-}
-
+.rsec p { margin: 0 0 4mm; }
 .rsec .empty {
-  color: #999;
+  color: #8a847e;
   font-style: italic;
-  font-size: 9pt;
 }
-
-/* ---------- Inline citations ---------- */
-
-sup.cite {
-  font-family: "Helvetica", sans-serif;
-  font-size: 6.5pt;
-  letter-spacing: 0.05em;
-  color: #b46624;
-  vertical-align: super;
-  line-height: 0;
-  padding-left: 0.3mm;
-  font-style: normal;
+.rsec .qlist {
+  margin: 0 0 4mm 1.4em;
+  padding: 0;
 }
-
-.cited {
-  margin-top: 4mm;
-  font-family: "Helvetica", sans-serif;
-  font-size: 8pt;
-  color: #999;
-  letter-spacing: 0.06em;
+.rsec .qlist li { margin-bottom: 2mm; }
+.rsec .callout {
+  border-left: 2px solid #b8866e;
+  background: #f7f3ee;
+  padding: 4mm 5mm;
+  margin: 0 0 4mm;
 }
-.cited-label {
-  text-transform: uppercase;
-  letter-spacing: 0.18em;
-  margin-right: 3mm;
-  color: #aaa;
+.rsec .cite {
+  font-family: "Geist Mono", "Menlo", monospace;
   font-size: 7.5pt;
+  color: #b8866e;
+  padding: 0 2pt;
 }
-.cited .chip {
-  display: inline-block;
-  margin-right: 1.5mm;
-  padding: 0 1.2mm;
-  border: 0.3pt solid #d3cec4;
-  border-radius: 1pt;
-  color: #6b6055;
+.rsec .cited {
+  margin-top: 4mm;
+  font-family: "Geist Mono", "Menlo", monospace;
   font-size: 8pt;
+  color: #8a847e;
 }
-
-/* ---------- Sources ---------- */
+.rsec .cited .cited-label {
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  margin-right: 6pt;
+}
+.rsec .cited .chip {
+  display: inline-block;
+  padding: 0 5pt;
+  margin-right: 3pt;
+  border: 1px solid #d8d3cc;
+  border-radius: 999pt;
+  color: #3a3530;
+}
 
 .sources {
   page-break-before: always;
-  padding-top: 4mm;
+  padding-top: 10mm;
 }
 .sources h2 {
-  font-family: "Georgia", serif;
-  font-style: italic;
-  font-size: 22pt;
-  font-weight: normal;
-  margin: 0 0 8mm 0;
-  padding-bottom: 3mm;
-  border-bottom: 0.6pt solid #6b6055;
   display: flex;
   align-items: baseline;
-  gap: 7mm;
+  gap: 10pt;
+  margin: 0 0 6mm;
+  padding-bottom: 3mm;
+  border-bottom: 1px solid #d8d3cc;
+  font-family: "Georgia", serif;
+  font-size: 18pt;
+  font-weight: 600;
 }
 .sources h2 .ord {
-  font-family: "Helvetica", sans-serif;
-  font-style: normal;
-  font-size: 9pt;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: #b46624;
+  font-family: "Geist Mono", "Menlo", monospace;
+  font-size: 9.5pt;
+  letter-spacing: 0.1em;
+  color: #b8866e;
+  font-weight: 400;
 }
-
-.src-list {
+.sources .src-list {
   list-style: none;
-  margin: 0;
   padding: 0;
+  margin: 0;
 }
-.src-list li {
-  display: grid;
-  grid-template-columns: 12mm 1fr;
-  gap: 4mm;
+.sources .src-list li {
+  display: flex;
+  gap: 6mm;
   padding: 4mm 0;
-  border-bottom: 0.3pt solid #e6e1d6;
+  border-bottom: 1px solid #efe9e1;
   page-break-inside: avoid;
 }
-.src-list li:last-child {
-  border-bottom: none;
-}
-.src-num {
-  font-family: "Helvetica", sans-serif;
+.sources .src-num {
+  font-family: "Geist Mono", "Menlo", monospace;
   font-size: 9pt;
-  color: #b46624;
-  letter-spacing: 0.1em;
-  padding-top: 1pt;
+  color: #b8866e;
+  flex-shrink: 0;
+  width: 8mm;
 }
-.src-title {
-  font-size: 10.5pt;
+.sources .src-body { flex: 1; min-width: 0; }
+.sources .src-title {
+  font-family: "Georgia", serif;
+  font-size: 11.5pt;
   color: #1a1614;
   text-decoration: none;
-  display: block;
-  line-height: 1.3;
 }
-.src-host {
-  font-family: "Helvetica", sans-serif;
-  font-size: 7.5pt;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: #999;
-  margin: 1mm 0 0 0;
+.sources .src-host {
+  font-family: "Geist Mono", "Menlo", monospace;
+  font-size: 8pt;
+  color: #8a847e;
+  margin: 1mm 0 0;
+  letter-spacing: 0.04em;
 }
-.src-url {
-  font-family: "Courier New", monospace;
+.sources .src-url {
+  font-family: "Geist Mono", "Menlo", monospace;
   font-size: 7.5pt;
-  color: #888;
-  margin: 1mm 0 0 0;
+  color: #aaa49d;
+  margin: 1mm 0 0;
   word-break: break-all;
 }
-.src-list .snippet {
-  font-size: 9pt;
+.sources .snippet {
+  margin: 2mm 0 0;
+  color: #3a3530;
+  font-size: 9.5pt;
   font-style: italic;
-  color: #5a5044;
-  margin: 2mm 0 0 0;
-  line-height: 1.45;
 }
 """

@@ -17,6 +17,7 @@ import json
 from typing import Any
 
 from langchain_core.messages import HumanMessage
+from langgraph.checkpoint.memory import MemorySaver
 
 from app.core.config import get_settings
 from app.providers.factory import build_providers
@@ -52,7 +53,8 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
         llm, search = build_providers(settings, company_hint=args.company)
 
     deps = WorkflowDeps(llm=llm, search=search)
-    graph = build_graph(deps)
+    # In-memory checkpointer so the run can resume past `interrupt_after`.
+    graph = build_graph(deps, checkpointer=MemorySaver())
 
     config = {
         "configurable": {
@@ -83,10 +85,9 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
     await graph.ainvoke(initial, config=config)
     final = await graph.ainvoke(None, config=config)
 
-    report = final.get("report")
     return {
         "company": args.company,
-        "report": report.model_dump(mode="json") if report else None,
+        "final_report": final.get("final_report"),
         "sources_count": len(final.get("sources", []) or []),
     }
 

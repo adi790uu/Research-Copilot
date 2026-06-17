@@ -6,13 +6,12 @@ import structlog
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import chats, health, sessions, users, workflow
+from app.api import auth, health, sessions, users, workflow
 from app.core.config import get_settings
 from app.core.errors import register_error_handlers
 from app.core.logging import configure_logging, get_logger
 from app.persistence.checkpointer import checkpointer_lifespan
 from app.persistence.db import dispose_db, init_db
-from app.services.event_bus import WorkflowEventBus
 from app.services.workflow_service import WorkflowService
 
 
@@ -26,10 +25,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     log.info("db_ready")
     async with checkpointer_lifespan() as saver:
         app.state.checkpointer = saver
-        app.state.event_bus = WorkflowEventBus()
-        app.state.workflow_service = WorkflowService(
-            bus=app.state.event_bus, checkpointer=saver
-        )
+        app.state.workflow_service = WorkflowService(checkpointer=saver)
         log.info("checkpointer_ready")
         try:
             yield
@@ -65,10 +61,11 @@ def create_app() -> FastAPI:
 
     register_error_handlers(app)
     app.include_router(health.router)
+    app.include_router(auth.router)
     app.include_router(users.router)
     app.include_router(sessions.router)
     app.include_router(workflow.router)
-    app.include_router(chats.router)
+    app.include_router(workflow.jobs_router)
 
     return app
 

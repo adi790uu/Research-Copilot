@@ -1,12 +1,20 @@
+"""Bearer-token auth for protected endpoints.
+
+Token format: HS256 JWT minted by us at sign-in / sign-up time. The
+dependency reads `Authorization: Bearer <jwt>` and falls back to `?token=`
+for clients that can't send headers (e.g. EventSource).
+"""
+
+from __future__ import annotations
+
 from dataclasses import dataclass
 
-from clerk_backend_api.security import authenticate_request
-from clerk_backend_api.security.types import AuthenticateRequestOptions
+import jwt
 from fastapi import Request
 
-from app.core.config import get_settings
 from app.core.errors import AppError
 from app.core.logging import get_logger
+from app.core.security import decode_token
 
 log = get_logger(__name__)
 
@@ -19,60 +27,34 @@ class UnauthorizedError(AppError):
 @dataclass(frozen=True)
 class CurrentUser:
     id: str
-    email: str | None
-    """Set of session claims we care about. Add fields as the product grows."""
+    email: str
 
 
-class _AuthShim:
-    """Minimal Requestish wrapper that overrides Authorization with a query token.
-
-    EventSource can't send custom headers, so the SSE endpoint passes the
-    Clerk JWT in `?token=...`. We forward all other headers unchanged so the
-    Clerk SDK keeps its usual behavior (CSRF, origin checks, etc.).
-    """
-
-    def __init__(self, request: Request, token: str) -> None:
-        self._headers = dict(request.headers)
-        self._headers["authorization"] = f"Bearer {token}"
-
-    @property
-    def headers(self) -> dict[str, str]:
-        return self._headers
+def _extract_bearer(request: Request) -> str | None:
+    auth = request.headers.get("authorization") or request.headers.get("Authorization")
+    if auth and auth.lower().startswith("bearer "):
+        return auth[7:].strip() or None
+    # Fallback for clients that can't set headers (EventSource and friends).
+    token = request.query_params.get("token")
+    return token.strip() if token else None
 
 
 async def get_current_user(request: Request) -> CurrentUser:
-    """FastAPI dependency: validate the Clerk session JWT and return the user.
+    token = _extract_bearer(request)
+    if not token:
+        raise UnauthorizedError("Missing bearer token")
 
-    Reads `Authorization: Bearer <jwt>` from the request and verifies against
-    Clerk's JWKS via the official SDK. As a fallback for `EventSource` (which
-    can't set headers), accepts `?token=<jwt>` in the query string. Raises 401
-    on any failure.
-    """
-    settings = get_settings()
-    if not settings.clerk_secret_key:
-        # Fail loud in production; tests override this dependency.
-        raise UnauthorizedError("Auth is not configured on this server")
+    try:
+        payload = decode_token(token)
+    except jwt.ExpiredSignatureError as exc:
+        raise UnauthorizedError("Token expired") from exc
+    except jwt.InvalidTokenError as exc:
+        # Catches bad signature, wrong issuer, missing claim, etc.
+        log.info("auth_failed", reason=str(exc))
+        raise UnauthorizedError("Invalid token") from exc
 
-    query_token = request.query_params.get("token")
-    requestish = _AuthShim(request, query_token) if query_token else request
-
-    state = authenticate_request(
-        requestish,
-        AuthenticateRequestOptions(secret_key=settings.clerk_secret_key),
-    )
-
-    log.info("auth_state", status=str(state.status), has_payload=bool(state.payload), reason=str(state.reason) if state.reason else None)
-
-    if not state.payload or not state.is_signed_in:
-        log.info("auth_failed", reason=str(state.reason) if state.reason else "no_payload")
-        raise UnauthorizedError("Not signed in")
-
-    user_id = state.payload.get("sub")
-    if not user_id:
-        raise UnauthorizedError("Token missing subject")
-
-    # Email isn't always in the session token payload; Clerk puts it in `email`
-    # if the JWT template includes it. Fall back to None.
-    email = state.payload.get("email")
-
-    return CurrentUser(id=user_id, email=email)
+    sub = payload.get("sub")
+    email = payload.get("email")
+    if not sub or not email:
+        raise UnauthorizedError("Token missing identity claims")
+    return CurrentUser(id=str(sub), email=str(email))

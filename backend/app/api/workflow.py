@@ -1,14 +1,25 @@
-"""Workflow run + SSE streaming endpoints."""
+"""Workflow + research-job HTTP endpoints.
+
+Two surfaces:
+
+* **Phase 1 chat** (`POST /sessions/{id}/chat`) — drives clarify → brief →
+  plan inline, streaming events as SSE until the graph pauses for
+  clarification or plan approval.
+* **Phase 2 jobs** — `POST /sessions/{id}/plan/approve` kicks off a
+  background `ResearchJob`; the frontend polls `GET /jobs/{id}` until the
+  job is `completed` or `failed`.
+"""
 
 from __future__ import annotations
 
-import asyncio
-import json
+import json as _json
 import re
 import unicodedata
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
+from typing import Literal
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,116 +30,76 @@ from app.core.logging import get_logger
 from app.domain.events import WorkflowEvent
 from app.domain.report import Report, ReportContent
 from app.persistence.db import get_db_session
-from app.persistence.repositories import ReportRepository, SessionRepository
-from app.services.event_bus import WorkflowEventBus
+from app.persistence.repositories import SessionRepository
+from app.services import job_store, report_chat
 from app.services.pdf_export import PDFRenderError, report_to_pdf
 from app.services.workflow_service import WorkflowService
-
-
 class PDFUnavailableError(AppError):
     status_code = 503
     code = "pdf_renderer_unavailable"
 
-router = APIRouter(prefix="/sessions/{session_id}", tags=["workflow"])
+
 log = get_logger(__name__)
-
-
-def _bus(request: Request) -> WorkflowEventBus:
-    return request.app.state.event_bus  # type: ignore[no-any-return]
 
 
 def _service(request: Request) -> WorkflowService:
     return request.app.state.workflow_service  # type: ignore[no-any-return]
 
 
-@router.post("/run", status_code=status.HTTP_202_ACCEPTED)
-async def run_session(
+# ─── Phase 1: chat SSE ──────────────────────────────────────────────────────
+
+router = APIRouter(prefix="/sessions/{session_id}", tags=["workflow"])
+
+
+ChatTurnKind = Literal["start", "answer", "subscribe"]
+
+
+class ChatTurn(BaseModel):
+    """One user turn in the phase-1 chat flow."""
+
+    kind: ChatTurnKind
+    # For "answer": the message text to inject (typically the clarification
+    # answer the user picked).
+    message: str | None = None
+
+
+@router.post("/chat")
+async def chat(
     session_id: str,
-    request: Request,
-    user: CurrentUser = Depends(get_current_user),
-) -> dict[str, str]:
-    """Kick off a research run for the session. Returns immediately; the caller
-    should connect to GET /stream to watch progress."""
-    await _service(request).start_run(session_id=session_id, user_id=user.id)
-    return {"session_id": session_id, "status": "running"}
-
-
-class ClarificationAnswers(BaseModel):
-    answers: list[str] = Field(default_factory=list)
-
-
-@router.post("/clarifications", status_code=status.HTTP_202_ACCEPTED)
-async def submit_clarifications(
-    session_id: str,
-    payload: ClarificationAnswers,
-    request: Request,
-    user: CurrentUser = Depends(get_current_user),
-) -> dict[str, str]:
-    """Resume a session that paused for clarification with the user's answers."""
-    await _service(request).submit_clarifications(
-        session_id=session_id, user_id=user.id, answers=payload.answers
-    )
-    return {"session_id": session_id, "status": "running"}
-
-
-@router.post("/plan/approve", status_code=status.HTTP_202_ACCEPTED)
-async def approve_plan(
-    session_id: str,
-    request: Request,
-    user: CurrentUser = Depends(get_current_user),
-) -> dict[str, str]:
-    """Approve the research plan so the supervisor + final report can run."""
-    await _service(request).approve_plan(session_id=session_id, user_id=user.id)
-    return {"session_id": session_id, "status": "running"}
-
-
-def _sse_format(event: WorkflowEvent) -> bytes:
-    """Encode a single SSE message: `event: <type>\\ndata: <json>\\n\\n`."""
-    payload = event.model_dump_json()
-    return f"event: {event.type}\ndata: {payload}\n\n".encode()
-
-
-@router.get("/stream")
-async def stream_session(
-    session_id: str,
+    payload: ChatTurn,
     request: Request,
     user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
 ) -> StreamingResponse:
-    """Server-Sent Events stream of run progress for a session.
+    """SSE stream for the phase-1 portion of the workflow.
 
-    Replays the retained event log first (so reconnects see history), then
-    tails new events until a terminal event (`report_ready` or `run_failed`)
-    or the client disconnects.
+    The body's `kind` advances the graph:
+      - `start`: seed the run (no message).
+      - `answer`: append `message` as a new HumanMessage and re-drive.
+      - `subscribe`: tail the current run without injecting a turn.
+
+    The stream closes when the graph pauses (clarification_requested /
+    plan_ready) or fails. The frontend then either submits answers (POST
+    /chat with `answer`) or approves the plan (POST /plan/approve).
     """
-    # Ownership check — only the session's owner can subscribe.
     owned = await SessionRepository(db, user.id).get(session_id)
     if owned is None:
         raise NotFoundError(f"Session {session_id} not found")
 
-    bus = _bus(request)
-    replay, queue, already_terminated = await bus.subscribe(session_id)
+    svc = _service(request)
+    message = payload.message if payload.kind == "answer" else None
+    if payload.kind == "answer" and not (payload.message and payload.message.strip()):
+        raise AppError("'answer' requires a non-empty message")
+
+    event_iter = await svc.run_phase1(
+        session_id=session_id, user_id=user.id, message=message
+    )
 
     async def generator() -> AsyncIterator[bytes]:
-        try:
-            for ev in replay:
-                yield _sse_format(ev)
-            if already_terminated:
+        async for ev in event_iter:
+            if await request.is_disconnected():
                 return
-            while True:
-                if await request.is_disconnected():
-                    return
-                try:
-                    ev = await asyncio.wait_for(queue.get(), timeout=15.0)
-                except TimeoutError:
-                    # SSE keep-alive comment — prevents proxies from closing idle conns.
-                    yield b": keep-alive\n\n"
-                    continue
-                if ev is None:
-                    return
-                yield _sse_format(ev)
-        finally:
-            await bus.unsubscribe(session_id, queue)
+            yield _sse_format(ev)
 
     return StreamingResponse(
         generator(),
@@ -141,63 +112,219 @@ async def stream_session(
     )
 
 
-@router.get("/report", response_model=Report)
-async def get_report(
+def _sse_format(event: WorkflowEvent) -> bytes:
+    payload = event.model_dump_json()
+    return f"event: {event.type}\ndata: {payload}\n\n".encode()
+
+
+# Plan editing / approval routes were removed when phase 2 became
+# auto-spawned from the SSE handler. The service-layer methods stay around
+# (`save_plan_edits`, `approve_plan`) but are no longer reachable from HTTP.
+
+
+# ─── Session-scoped reads ───────────────────────────────────────────────────
+
+
+@router.get("/jobs")
+async def list_session_jobs(
     session_id: str,
     db: AsyncSession = Depends(get_db_session),
     user: CurrentUser = Depends(get_current_user),
-) -> Report:
+) -> list[dict]:
     owned = await SessionRepository(db, user.id).get(session_id)
     if owned is None:
         raise NotFoundError(f"Session {session_id} not found")
+    job = await job_store.get_job_by_session(session_id)
+    return [job] if job else []
 
-    row = await ReportRepository(db).get_by_session(session_id)
-    if row is None:
-        raise NotFoundError(f"Report for session {session_id} not found")
 
-    content = row.content if isinstance(row.content, dict) else json.loads(row.content)
-    return Report(
-        id=row.id,
-        session_id=row.session_id,
-        content=ReportContent.model_validate(content),
-        created_at=row.created_at,
+@router.get("/job")
+async def get_latest_job(
+    session_id: str,
+    db: AsyncSession = Depends(get_db_session),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    """Convenience: the most recent job for this session, or 404 if none."""
+    owned = await SessionRepository(db, user.id).get(session_id)
+    if owned is None:
+        raise NotFoundError(f"Session {session_id} not found")
+    job = await job_store.get_job_by_session(session_id)
+    if job is None:
+        raise NotFoundError(f"No job for session {session_id}")
+    return job
+
+
+# ─── Follow-up chat over a finished report ─────────────────────────────────
+
+
+class FollowupMessage(BaseModel):
+    """User turn for the post-report chat."""
+
+    content: str = Field(min_length=1, max_length=4000)
+
+
+@router.get("/messages")
+async def list_session_messages(
+    session_id: str,
+    db: AsyncSession = Depends(get_db_session),
+    user: CurrentUser = Depends(get_current_user),
+) -> list[dict]:
+    return await report_chat.list_messages(
+        db, session_id=session_id, user_id=user.id
     )
 
 
-@router.get("/report.pdf")
-async def get_report_pdf(
+@router.post("/messages")
+async def post_session_message(
     session_id: str,
+    payload: FollowupMessage,
+    request: Request,
+    db: AsyncSession = Depends(get_db_session),
+    user: CurrentUser = Depends(get_current_user),
+) -> StreamingResponse:
+    """Stream a follow-up reply token-by-token.
+
+    SSE frames: `event: token\\ndata: <text>\\n\\n` per chunk,
+    `event: done\\ndata: {}\\n\\n` when the reply is complete.
+    """
+
+    async def generator() -> AsyncIterator[bytes]:
+        try:
+            async for chunk in report_chat.stream_followup(
+                db,
+                session_id=session_id,
+                user_id=user.id,
+                question=payload.content,
+            ):
+                if await request.is_disconnected():
+                    return
+                yield f"event: token\ndata: {_sse_escape(chunk)}\n\n".encode()
+            yield b"event: done\ndata: {}\n\n"
+        except Exception as exc:  # noqa: BLE001
+            # Surface the error inline so the frontend can render it.
+            msg = str(exc).replace("\n", " ")
+            yield f"event: error\ndata: {msg}\n\n".encode()
+
+    return StreamingResponse(
+        generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
+def _sse_escape(text: str) -> str:
+    # SSE `data:` lines can't contain raw newlines — split into multiple
+    # `data:` continuation lines per the spec.
+    return text.replace("\r\n", "\n").replace("\n", "\ndata: ")
+
+
+# ─── Job-scoped reads ───────────────────────────────────────────────────────
+
+jobs_router = APIRouter(prefix="/jobs", tags=["jobs"])
+
+
+async def _job_or_404(job_id: str, user_id: str) -> dict:
+    job = await job_store.get_job(job_id)
+    if job is None:
+        raise NotFoundError(f"Job {job_id} not found")
+    if job.get("user_id") != user_id:
+        # Treat ownership mismatch as 404 — don't leak existence.
+        raise NotFoundError(f"Job {job_id} not found")
+    return job
+
+
+@jobs_router.get("/{job_id}")
+async def get_job(
+    job_id: str,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    return await _job_or_404(job_id, user.id)
+
+
+@jobs_router.get("/{job_id}/events")
+async def get_job_events(
+    job_id: str,
+    user: CurrentUser = Depends(get_current_user),
+) -> list[dict]:
+    await _job_or_404(job_id, user.id)
+    return await job_store.get_job_events(job_id)
+
+
+@jobs_router.get("/{job_id}/researchers")
+async def get_job_researchers(
+    job_id: str,
+    user: CurrentUser = Depends(get_current_user),
+) -> list[dict]:
+    await _job_or_404(job_id, user.id)
+    return await job_store.get_job_researchers(job_id)
+
+
+@jobs_router.get("/{job_id}/tasks")
+async def get_job_tasks(
+    job_id: str,
+    user: CurrentUser = Depends(get_current_user),
+) -> list[dict]:
+    await _job_or_404(job_id, user.id)
+    return await job_store.get_job_tasks(job_id)
+
+
+@jobs_router.get("/{job_id}/report.pdf")
+async def get_job_report_pdf(
+    job_id: str,
     db: AsyncSession = Depends(get_db_session),
     user: CurrentUser = Depends(get_current_user),
 ) -> Response:
-    """Render the report as a print-styled PDF and return it as a download."""
-    owned = await SessionRepository(db, user.id).get(session_id)
-    if owned is None:
-        raise NotFoundError(f"Session {session_id} not found")
+    job = await _job_or_404(job_id, user.id)
+    raw_report = job.get("final_report")
+    if not raw_report:
+        raise NotFoundError(f"Job {job_id} has no final report yet")
 
-    row = await ReportRepository(db).get_by_session(session_id)
-    if row is None:
-        raise NotFoundError(f"Report for session {session_id} not found")
+    # research_jobs.final_report is the JSON-encoded ReportContent that
+    # background.py wrote. Parse it back into a typed Report so pdf_export
+    # can render the structured 8-section template.
+    try:
+        content_dict = (
+            raw_report if isinstance(raw_report, dict) else _json.loads(raw_report)
+        )
+        content = ReportContent.model_validate(content_dict)
+    except (ValueError, _json.JSONDecodeError) as exc:
+        log.error("report_payload_corrupt", job_id=job_id, error=str(exc))
+        raise NotFoundError(f"Job {job_id} report payload is corrupt") from exc
 
-    content = row.content if isinstance(row.content, dict) else json.loads(row.content)
+    session_id = job.get("session_id", "")
+    sess = await SessionRepository(db, user.id).get(session_id)
+    company_name = sess.company_name if sess else "Company"
+    objective = sess.objective if sess else ""
+
+    created_at_iso = job.get("updated_at") or job.get("created_at")
+    created_at = (
+        datetime.fromisoformat(created_at_iso)
+        if isinstance(created_at_iso, str)
+        else datetime.now(UTC)
+    )
+
     report = Report(
-        id=row.id,
-        session_id=row.session_id,
-        content=ReportContent.model_validate(content),
-        created_at=row.created_at,
+        id=job_id,
+        session_id=session_id,
+        content=content,
+        created_at=created_at,
     )
 
     try:
         pdf_bytes = report_to_pdf(
             report,
-            company_name=owned.company_name,
-            objective=owned.objective,
+            company_name=company_name,
+            objective=objective,
         )
     except PDFRenderError as exc:
         log.error("pdf_renderer_unavailable", error=str(exc))
         raise PDFUnavailableError(str(exc)) from exc
 
-    filename = f"brief-{_slugify(owned.company_name)}-{report.id[:6]}.pdf"
+    filename = f"brief-{_slugify(company_name)}-{job_id[:6]}.pdf"
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
@@ -209,6 +336,5 @@ async def get_report_pdf(
 
 
 def _slugify(value: str) -> str:
-    """Filesystem-safe ASCII slug. Conservative: alnum + hyphen."""
     normalized = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode()
     return re.sub(r"[^a-zA-Z0-9]+", "-", normalized).strip("-").lower() or "brief"

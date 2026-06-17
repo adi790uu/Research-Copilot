@@ -10,10 +10,16 @@ from langgraph.graph import MessagesState
 from pydantic import BaseModel, Field
 
 from app.domain.report import ReportContent, Source
-from app.workflow.prompts import REPORT_SECTIONS
 
 # ----- Reducers ----------------------------------------------------------
 
+SourceStrategy = Literal["company_site_first", "external_first", "both_parallel"]
+ToolsRouting = Literal["company_site", "web", "both"]
+Priority = Literal["depth", "breadth"]
+
+# Keys MUST stay in sync with `app.domain.report.ReportContent`. Used by
+# the reviewer prompt to iterate per-section and by the prompts module to
+# expose a stable catalog string.
 ReportSectionName = Literal[
     "company_overview",
     "products_and_services",
@@ -24,9 +30,6 @@ ReportSectionName = Literal[
     "outreach_strategy",
     "unknowns",
 ]
-SourceStrategy = Literal["company_site_first", "external_first", "both_parallel"]
-ToolsRouting = Literal["company_site", "web", "both"]
-Priority = Literal["depth", "breadth"]
 
 
 def override_reducer(current: list[Any], new: Any) -> list[Any]:
@@ -83,9 +86,6 @@ class ResearchBrief(BaseModel):
 class ResearchSubtopic(BaseModel):
     title: str = Field(description="Short name for this subtopic.")
     description: str = Field(description="1-2 sentences on what to investigate.")
-    section: ReportSectionName = Field(
-        description="Which report section this subtopic fills.",
-    )
     tools: ToolsRouting = Field(
         description="company_site, web, or both.",
     )
@@ -116,23 +116,14 @@ class ConductResearch(BaseModel):
     tools_to_use: ToolsRouting = Field(
         description="company_site | web | both.",
     )
-    section: ReportSectionName = Field(
-        description="Which of the 8 fixed report sections this researcher fills.",
-    )
 
 
 class ResearchComplete(BaseModel):
     """Call when research is sufficient to write the final report."""
 
 
-# Sanity check — keeps the prompts and state in sync.
-assert set(REPORT_SECTIONS) == set(ReportSectionName.__args__), (  # type: ignore[attr-defined]
-    "REPORT_SECTIONS must match ReportSectionName literal"
-)
-
-
 class _PolishedSection(BaseModel):
-    """Pass-2 review output for a single section."""
+    """Pass-2 review output for a single section. Used by `final_report.py`."""
 
     content: str
     source_ids: list[str] = Field(default_factory=list)
@@ -163,6 +154,9 @@ class AgentState(MessagesState):
     notes: Annotated[list[str], override_reducer]
     raw_notes: Annotated[list[str], override_reducer]
     sources: Annotated[list[Source], _dedup_sources]
+    # Structured 8-section report produced by `final_report_generation`.
+    # The model_dump'd shape lands in `research_jobs.final_report` as JSON
+    # so the frontend can render the same structure it sees here.
     report: ReportContent | None
 
 
@@ -181,7 +175,6 @@ class ResearcherState(TypedDict, total=False):
     researcher_messages: Annotated[list[MessageLikeRepresentation], operator.add]
     research_topic: str
     tools_to_use: ToolsRouting
-    section: ReportSectionName
     company_name: str
     website: str
     tool_call_iterations: int
@@ -206,5 +199,6 @@ __all__ = [
     "SourceStrategy",
     "SupervisorState",
     "ToolsRouting",
+    "_PolishedSection",
     "override_reducer",
 ]
