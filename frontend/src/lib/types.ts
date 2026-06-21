@@ -109,9 +109,10 @@ export interface ClarificationRequestedEvent extends BaseEvent {
 export interface PlanReadyEvent extends BaseEvent {
   type: "plan_ready";
   plan: ResearchPlan;
-  /** Phase-2 background job that was just spawned by the backend. The
-   * frontend stops watching SSE and starts polling /jobs/{job_id}. */
-  job_id: string;
+  /** Set only on legacy auto-spawn runs. In the current flow the plan
+   * pauses for human approval and no job exists yet — the frontend calls
+   * `POST /sessions/{id}/plan/approve` to create it. */
+  job_id?: string | null;
 }
 export interface RunFailedEvent extends BaseEvent {
   type: "run_failed";

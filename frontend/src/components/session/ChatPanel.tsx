@@ -1,10 +1,17 @@
-import { useState, type FormEvent, type KeyboardEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+} from "react";
 
 import type { ReportChatTurn } from "../../hooks/useReportChat";
 import { type ChatTurn, type RunPhase } from "../../hooks/useWorkflowChat";
 import type {
   ClarificationQuestion,
   ResearchJob,
+  ResearchPlan,
   ResearcherResult,
   WorkflowNode,
 } from "../../lib/types";
@@ -19,9 +26,12 @@ interface Props {
   /** Click handler for the inline report Document card. Opens artifact
    * panel scrolled to the report block. */
   onOpenReport: () => void;
-  /** Click handler for the inline plan_ready card. Opens artifact panel
-   * scrolled to the plan block. */
-  onOpenPlan: () => void;
+  /** Approve the plan inline → create + trigger the phase-2 job. */
+  onApprovePlan: () => void;
+  /** True while the approve request is in flight. */
+  approving: boolean;
+  /** Error from a failed approve attempt. */
+  approveError: string | null;
   error: string | null;
 
   // ─── Follow-up chat (post-report) ─────────────────────────────────────
@@ -37,9 +47,9 @@ interface Props {
    * applicable) follow-up history have all resolved. */
   initialLoading: boolean;
 
-  /** Phase-2 state — fed to the run status ticker so it can keep
-   * showing live activity after SSE closes (researchers running, writing
-   * the brief, etc.) instead of freezing on "phase one complete". */
+  /** Phase-2 state — drives the thinking bubble's activity caption so it
+   * keeps narrating live work (researchers running, writing the brief)
+   * after the phase-1 SSE closes. */
   job: ResearchJob | null;
   researchers: ResearcherResult[];
 }
@@ -51,7 +61,9 @@ export function ChatPanel({
   streaming,
   onAnswers,
   onOpenReport,
-  onOpenPlan,
+  onApprovePlan,
+  approving,
+  approveError,
   error,
   followupEnabled,
   followupTurns,
@@ -62,36 +74,61 @@ export function ChatPanel({
   job,
   researchers,
 }: Props) {
-  // Pull the most recent unanswered clarification so the sticky widget can
-  // render it. The feed filter below suppresses any inline clarification
-  // turns so questions only ever appear in one place.
-  const lastClarification = findLast(turns, (t) =>
-    t.role === "assistant" && t.kind === "clarification" && !t.answered
-  ) as
-    | ({ role: "assistant"; kind: "clarification" } & {
-        questions: ClarificationQuestion[];
-      })
-    | undefined;
+  // Conversation feed: drop node_status turns (they only feed the thinking
+  // caption) and all clarification turns (the question is pinned in the footer
+  // above the input box; the user's answers turn carries the Q&A in the feed).
+  const visibleTurns = turns.filter(
+    (t) =>
+      !(t.role === "assistant" && t.kind === "node_status") &&
+      !(t.role === "assistant" && t.kind === "clarification")
+  );
 
-  // Decide what the bottom slot renders. Always render *something* so the
-  // input area is never empty — that's what makes the page feel like a
-  // proper chat. Priority:
-  //   1. Clarification widget when the LLM asks a question.
-  //   2. Follow-up composer once the report is ready.
-  //   3. Passive "waiting" composer otherwise — shows the user where
-  //      input would go and what state the run is in.
-  const showClarification =
-    phase === "awaiting_clarification" && !!lastClarification;
-  const showFollowup = followupEnabled && !showClarification;
+  // The clarification the footer is currently asking — the latest unanswered
+  // one. Pinned directly above the input box.
+  const pendingClarification = findLast(
+    turns,
+    (t) => t.role === "assistant" && t.kind === "clarification" && !t.answered
+  ) as Extract<ChatTurn, { kind: "clarification" }> | undefined;
+
+  // Is the agent actively working right now? That's our cue to render the
+  // "thinking" reply bubble. We suppress it whenever the conversation is
+  // waiting on the user (clarification / plan approval) or already settled
+  // (report ready / failed) — those states own the bottom of the feed.
+  const hasReport = !!job?.final_report;
+  const jobFailed = job?.status === "failed";
+  const jobRunning = !!job && !hasReport && !jobFailed;
+  const awaitingClarification =
+    phase === "awaiting_clarification" &&
+    turns.some(
+      (t) => t.role === "assistant" && t.kind === "clarification" && !t.answered
+    );
+  const awaitingApproval = phase === "awaiting_plan_approval";
+
+  const showThinking =
+    !hasReport &&
+    !jobFailed &&
+    !awaitingClarification &&
+    !awaitingApproval &&
+    (streaming || phase === "running" || jobRunning);
+
+  const activity = deriveActivity(turns, job, researchers);
+
+  // Auto-scroll to the newest message so the to-and-fro stays in view.
+  const bottomRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [visibleTurns.length, showThinking, activity.label, followupTurns.length]);
+
+  const composerDisabled = !followupEnabled;
 
   return (
-    // Grid rows: header / feed (fr). Composer is absolutely positioned
-    // over the bottom of the feed so messages can scroll the full height
-    // of the panel. The feed has bottom padding equal to the composer's
-    // footprint so the last message scrolls fully into view.
+    // Grid rows: header / scrollable feed / footer. The footer is always
+    // present — it pins the clarification card (when asked) directly above an
+    // input box that's visible from the start and enabled once the report is
+    // ready for follow-up.
     <section
       className="relative grid h-full min-h-0 bg-bg"
-      style={{ gridTemplateRows: "auto minmax(0, 1fr)" }}
+      style={{ gridTemplateRows: "auto minmax(0, 1fr) auto" }}
     >
       <header className="px-8 pt-7 pb-5">
         <p className="font-mono text-[0.625rem] uppercase tracking-eyebrow text-ink-faint">
@@ -102,87 +139,155 @@ export function ChatPanel({
         </h2>
       </header>
 
-      <div className="overflow-y-auto px-8 pt-6 pb-40">
+      <div className="overflow-y-auto px-8 pt-6 pb-8">
         {initialLoading ? (
           <FeedSkeleton />
-        ) : turns.length === 0 ? (
-          // Brief gap between auto-start and the first SSE event lands
-          // here — render nothing so the page stays quiet rather than
-          // flashing a placeholder. The node-status ticker will appear
-          // as soon as `run_started` arrives.
+        ) : visibleTurns.length === 0 && !showThinking ? (
+          // Brief gap between auto-start and the first SSE event — stay quiet.
           null
         ) : (
           <ol className="panel-reveal space-y-4">
-            {groupNodeStatuses(
-              turns.filter(
-                (t) =>
-                  !(t.role === "assistant" && t.kind === "clarification")
-              )
-            ).map((block, i) =>
-              block.kind === "node_group" ? (
-                <NodeStatusCard
-                  key={i}
-                  steps={block.steps}
-                  job={job}
-                  researchers={researchers}
-                />
-              ) : (
-                <TurnView
-                  key={i}
-                  turn={block.turn}
-                  onOpenReport={onOpenReport}
-                  onOpenPlan={onOpenPlan}
-                />
-              )
-            )}
+            {visibleTurns.map((turn, i) => (
+              <TurnView
+                key={i}
+                turn={turn}
+                onOpenReport={onOpenReport}
+                onApprovePlan={onApprovePlan}
+                approving={approving}
+                approveError={approveError}
+              />
+            ))}
+            {showThinking ? (
+              <ThinkingBubble label={activity.label} detail={activity.detail} />
+            ) : null}
             {followupTurns.map((t) => (
               <FollowupTurnView key={t.id} turn={t} />
             ))}
+            <div ref={bottomRef} />
           </ol>
         )}
       </div>
 
-      {/* Footer slot — floats above the feed so messages can scroll
-          edge-to-edge. A soft top fade masks the scroll-into transition.
-          The footer itself sits on top with a high z-index. */}
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10">
-        {/* Top fade — messages scroll under this and dissolve into the
-            page background. pointer-events-none so it can't intercept. */}
-        <div
-          aria-hidden
-          className="h-12 bg-gradient-to-t from-bg to-transparent"
-        />
-        <div className="pointer-events-auto bg-bg">
-          {showClarification && lastClarification ? (
-            <div className="px-6 pt-3 pb-5">
+      {/* Footer — always present. The clarification card (when the agent is
+          asking) is pinned directly above the input box. The input box shows
+          from the start, disabled until the report unlocks follow-up chat. */}
+      <footer className="bg-bg">
+        {pendingClarification ? (
+          <div className="px-6 pt-4">
+            <div className="mx-auto w-full max-w-[40rem]">
               <ClarificationCard
-                questions={lastClarification.questions}
+                questions={pendingClarification.questions}
                 submitting={streaming}
                 error={error}
                 onSubmit={(answers) =>
-                  onAnswers(answers, lastClarification.questions)
+                  onAnswers(answers, pendingClarification.questions)
                 }
               />
             </div>
-          ) : showFollowup ? (
-            <FollowupComposer
-              sending={followupSending}
-              error={followupError}
-              onSend={onFollowupSend}
-            />
-          ) : (
-            <PassiveComposer phase={phase} />
-          )}
-          {error && phase !== "failed" && !showClarification ? (
-            <div className="px-8 pb-3">
-              <p className="font-mono text-[0.625rem] uppercase tracking-eyebrow text-bad">
-                {error}
-              </p>
-            </div>
-          ) : null}
-        </div>
-      </div>
+          </div>
+        ) : null}
+
+        <FollowupComposer
+          sending={followupSending}
+          error={
+            followupEnabled
+              ? followupError
+              : pendingClarification
+                ? null // the clarification card surfaces the error instead
+                : error
+          }
+          onSend={onFollowupSend}
+          disabled={composerDisabled}
+          placeholder={
+            followupEnabled
+              ? "Ask a follow-up about the report…"
+              : disabledComposerHint(phase, !!pendingClarification)
+          }
+        />
+      </footer>
     </section>
+  );
+}
+
+/** Placeholder for the always-visible composer while it's disabled (before the
+ * report unlocks follow-up). */
+function disabledComposerHint(phase: RunPhase, awaitingClarification: boolean): string {
+  if (awaitingClarification) return "Answer the question above to continue.";
+  if (phase === "awaiting_plan_approval")
+    return "Approve the plan to start research.";
+  if (phase === "failed") return "Run failed — start a new brief.";
+  return "Researching… chat unlocks when the brief is ready.";
+}
+
+function findLast<T>(arr: T[], pred: (x: T) => boolean): T | undefined {
+  for (let i = arr.length - 1; i >= 0; i--) {
+    if (pred(arr[i])) return arr[i];
+  }
+  return undefined;
+}
+
+/**
+ * Split a plan narrative like "I'll do X by (1) … , (2) … , and (3) … . Each
+ * angle will …" into an intro, numbered steps, and a trailing outro sentence.
+ * Returns null when the text isn't in that shape so the caller falls back to a
+ * plain paragraph.
+ */
+function parsePlan(
+  text: string
+): { intro: string; steps: string[]; outro: string } | null {
+  if (!text || !/\(\s*1\s*\)/.test(text)) return null;
+
+  const parts = text.split(/\(\s*\d+\s*\)\s*/); // [intro, seg1, seg2, …]
+  const intro = parts[0]?.trim().replace(/[:,]?\s*$/, "") ?? "";
+  const rawSteps = parts.slice(1).map((s) => s.trim()).filter(Boolean);
+  if (rawSteps.length === 0) return null;
+
+  // The last step often carries a trailing summary sentence ("Each angle …").
+  // Peel it off so it reads as an outro rather than part of step N.
+  let outro = "";
+  const last = rawSteps[rawSteps.length - 1];
+  const splitLast = last.match(/^(.*?[.;])\s+([A-Z].*)$/s);
+  if (splitLast) {
+    rawSteps[rawSteps.length - 1] = splitLast[1];
+    outro = splitLast[2];
+  }
+
+  const steps = rawSteps.map((s) =>
+    s.replace(/^(?:and\s+)?,?\s*/i, "").replace(/[,;]\s*$/, "").trim()
+  );
+
+  return { intro, steps, outro };
+}
+
+// ─── Thinking bubble ────────────────────────────────────────────────────────
+
+/** Left-aligned assistant "reply" while the agent works. An animated typing
+ * indicator plus a live caption of the current activity. */
+function ThinkingBubble({ label, detail }: { label: string; detail?: string }) {
+  return (
+    <li className="panel-reveal">
+      <div className="inline-flex max-w-[78%] items-center gap-3 rounded-[20px] rounded-bl-[6px] bg-ink/[0.04] px-4 py-3">
+        <TypingDots />
+        <span className="text-sm leading-relaxed text-ink-soft">
+          {label}
+          {detail ? <span className="text-ink-faint"> · {detail}</span> : null}
+        </span>
+      </div>
+    </li>
+  );
+}
+
+function TypingDots() {
+  return (
+    <span className="flex shrink-0 items-center gap-1" aria-hidden>
+      {[0, 1, 2].map((i) => (
+        <span
+          key={i}
+          className="block h-1.5 w-1.5 rounded-full bg-accent animate-pulse-dot"
+          style={{ animationDelay: `${i * 0.25}s` }}
+        />
+      ))}
+    </span>
   );
 }
 
@@ -261,47 +366,18 @@ function CyclingCaption() {
   );
 }
 
-function PassiveComposer({ phase }: { phase: RunPhase }) {
-  let hint = "Follow-up chat unlocks once the report is ready.";
-  if (phase === "running")
-    hint = "Agents are running — follow-up unlocks once the report is ready.";
-  else if (phase === "failed") hint = "Run failed. Start a new brief to try again.";
-
-  return (
-    <div className="shrink-0 px-6 pt-2 pb-5">
-      <div className="mx-auto w-full max-w-[36rem]">
-        <div className="rounded-2xl bg-bg-elev px-4 pt-3 pb-2 opacity-70">
-          <textarea
-            rows={1}
-            disabled
-            placeholder={hint}
-            className="block w-full resize-none bg-transparent text-[0.95rem] leading-relaxed text-ink-faint placeholder:text-ink-faint focus:outline-none"
-          />
-          <div className="mt-2 flex items-center justify-between gap-3">
-            <p className="font-mono text-[0.625rem] uppercase tracking-eyebrow text-ink-faint">
-              {hint}
-            </p>
-            <span
-              aria-hidden
-              className="font-mono text-[0.6875rem] uppercase tracking-eyebrow text-ink-faint/70"
-            >
-              Send →
-            </span>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function TurnView({
   turn,
   onOpenReport,
-  onOpenPlan,
+  onApprovePlan,
+  approving,
+  approveError,
 }: {
   turn: ChatTurn;
   onOpenReport: () => void;
-  onOpenPlan: () => void;
+  onApprovePlan: () => void;
+  approving: boolean;
+  approveError: string | null;
 }) {
   if (turn.role === "user") {
     if (turn.kind === "answers") {
@@ -331,28 +407,20 @@ function TurnView({
   }
   switch (turn.kind) {
     case "node_status":
-      // Rendered in the grouped NodeStatusCard above; never reached.
+      // Folded into the thinking bubble's caption; never rendered inline.
       return null;
     case "clarification":
-      // Should be unreachable — filtered out at the feed level. Render
-      // nothing rather than a stale card.
+      // Pinned in the footer above the input box, not in the feed.
       return null;
     case "plan_ready":
       return (
-        <li>
-          <button
-            type="button"
-            onClick={onOpenPlan}
-            className="group block w-full max-w-[78%] rounded-[20px] rounded-bl-[6px] bg-ink/[0.04] px-4 py-3 text-left transition-colors hover:bg-ink/[0.07]"
-          >
-            <p className="font-mono text-[0.625rem] uppercase tracking-eyebrow text-accent">
-              Plan ready
-            </p>
-            <p className="mt-1.5 text-sm leading-relaxed text-ink">
-              Researchers are dispatched. Tap to open the plan in the workspace.
-            </p>
-          </button>
-        </li>
+        <PlanCard
+          plan={turn.plan}
+          acted={turn.acted}
+          approving={approving}
+          approveError={approveError}
+          onApprove={onApprovePlan}
+        />
       );
     case "report_ready":
       // Document-style card: clicking opens the artifact panel scrolled
@@ -400,43 +468,156 @@ function TurnView({
   }
 }
 
-function findLast<T>(arr: T[], pred: (x: T) => boolean): T | undefined {
-  for (let i = arr.length - 1; i >= 0; i--) {
-    if (pred(arr[i])) return arr[i];
-  }
-  return undefined;
+// ─── Plan card ──────────────────────────────────────────────────────────────
+
+/** The plan, set as a typeset brief: a warm panel marked with an accent spine,
+ * the whole plan voiced in Fraunces (distinct from the sans chat) — a serif
+ * lead, a hanging-indexed list of angles, and a soft accent approve. */
+function PlanCard({
+  plan,
+  acted,
+  approving,
+  approveError,
+  onApprove,
+}: {
+  plan: ResearchPlan;
+  acted: boolean;
+  approving: boolean;
+  approveError: string | null;
+  onApprove: () => void;
+}) {
+  const parsed = parsePlan(plan.user_message || plan.strategy_summary);
+  const steps = parsed?.steps ?? [];
+  // The plan speaks in Newsreader — a calm editorial text serif, distinct from
+  // the Fraunces display + Geist sans used everywhere else.
+  const planFont = '"Newsreader", Georgia, serif';
+
+  return (
+    <li className="panel-reveal">
+      <div
+        className="relative w-full max-w-[37rem] rounded-[20px] bg-bg-elev"
+        style={{ boxShadow: "0 26px 70px -34px rgba(0,0,0,0.85)" }}
+      >
+        <div className="px-9 pt-8 pb-7">
+          {/* Eyebrow */}
+          <div className="flex items-baseline justify-between gap-4">
+            <p className="font-mono text-[0.625rem] uppercase tracking-eyebrow text-accent">
+              Research plan
+            </p>
+            {steps.length > 0 ? (
+              <span className="font-mono text-[0.625rem] uppercase tracking-eyebrow text-ink-faint">
+                {String(steps.length).padStart(2, "0")} steps
+              </span>
+            ) : null}
+          </div>
+
+          {/* Lead — Newsreader, confident editorial hook */}
+          {parsed?.intro ? (
+            <p
+              className="mt-4 max-w-[31rem] text-[1.4rem] leading-[1.4] text-ink"
+              style={{
+                fontFamily: planFont,
+                fontVariationSettings: '"opsz" 72, "wght" 440',
+              }}
+            >
+              {parsed.intro}
+            </p>
+          ) : null}
+
+          {/* Steps — right-aligned figures, generous rhythm */}
+          {steps.length > 0 ? (
+            <ol className="mt-7 space-y-4">
+              {steps.map((step, i) => (
+                <li key={i} className="flex gap-5">
+                  <span
+                    className="w-6 shrink-0 select-none pt-px text-right text-[0.92rem] leading-[1.85] text-accent/90 tabular-nums"
+                    style={{
+                      fontFamily: planFont,
+                      fontVariationSettings: '"opsz" 24, "wght" 560',
+                    }}
+                  >
+                    {String(i + 1).padStart(2, "0")}
+                  </span>
+                  <p
+                    className="flex-1 text-[1.05rem] leading-[1.8] text-ink-soft"
+                    style={{
+                      fontFamily: planFont,
+                      fontVariationSettings: '"opsz" 18, "wght" 400',
+                    }}
+                  >
+                    {step}
+                  </p>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p
+              className="mt-4 whitespace-pre-wrap text-[1.05rem] leading-[1.8] text-ink-soft"
+              style={{
+                fontFamily: planFont,
+                fontVariationSettings: '"opsz" 18, "wght" 400',
+              }}
+            >
+              {plan.user_message || plan.strategy_summary || "No plan details."}
+            </p>
+          )}
+
+          {/* Outro */}
+          {parsed?.outro ? (
+            <p
+              className="mt-6 text-[0.98rem] leading-relaxed text-ink-faint"
+              style={{
+                fontFamily: planFont,
+                fontStyle: "italic",
+                fontVariationSettings: '"opsz" 36, "wght" 400',
+              }}
+            >
+              {parsed.outro}
+            </p>
+          ) : null}
+
+          {/* Commit */}
+          <div className="mt-8 flex items-center gap-4">
+            {acted ? (
+              <p className="flex items-center gap-2 font-mono text-[0.625rem] uppercase tracking-eyebrow text-ink-faint">
+                <span
+                  aria-hidden
+                  className="h-1.5 w-1.5 animate-pulse-dot rounded-full bg-accent/80"
+                />
+                Researchers dispatched
+              </p>
+            ) : (
+              <button
+                type="button"
+                onClick={onApprove}
+                disabled={approving}
+                className="group/approve inline-flex items-center gap-2.5 rounded-full bg-accent px-5 py-2.5 text-sm font-medium text-bg transition-all duration-300 hover:brightness-105 disabled:opacity-45"
+                style={{ boxShadow: "0 12px 30px -12px rgb(var(--accent) / 0.6)" }}
+              >
+                {approving ? "Dispatching…" : "Approve & start research"}
+                <span
+                  aria-hidden
+                  className="transition-transform duration-300 group-hover/approve:translate-x-1"
+                >
+                  →
+                </span>
+              </button>
+            )}
+            {approveError ? (
+              <p className="font-mono text-[0.625rem] uppercase tracking-eyebrow text-bad">
+                {approveError}
+              </p>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </li>
+  );
 }
 
-// ─── Node-status grouping ──────────────────────────────────────────────────
+// ─── Activity caption (derived from phase-1 SSE + phase-2 polling) ──────────
 
 type NodeStatusTurn = Extract<ChatTurn, { kind: "node_status" }>;
-
-type FeedBlock =
-  | { kind: "node_group"; steps: NodeStatusTurn[] }
-  | { kind: "turn"; turn: ChatTurn };
-
-/** Fold consecutive node_status turns into one group so the feed shows a
- * single "Working" card instead of N free-floating bullet rows. */
-function groupNodeStatuses(turns: ChatTurn[]): FeedBlock[] {
-  const out: FeedBlock[] = [];
-  let bucket: NodeStatusTurn[] = [];
-  const flush = () => {
-    if (bucket.length) {
-      out.push({ kind: "node_group", steps: bucket });
-      bucket = [];
-    }
-  };
-  for (const t of turns) {
-    if (t.role === "assistant" && t.kind === "node_status") {
-      bucket.push(t);
-    } else {
-      flush();
-      out.push({ kind: "turn", turn: t });
-    }
-  }
-  flush();
-  return out;
-}
 
 /** The five "phases" the run walks through. Phase 1 events arrive from
  * SSE; phase 2 is derived from polled job + researcher state. */
@@ -450,19 +631,28 @@ const RUN_PHASES: { id: number; label: string }[] = [
 
 type StepState = "done" | "live" | "pending" | "failed";
 
-/** Five-dot progression strip + current-activity label. Gives the user a
- * visual sense of how far the run has come without showing every event
- * inline. Single line, compact, stays alive across phase 1 and 2. */
-function NodeStatusCard({
-  steps,
-  job,
-  researchers,
-}: {
-  steps: NodeStatusTurn[];
-  job: ResearchJob | null;
-  researchers: ResearcherResult[];
-}) {
-  // Defensively pick the latest phase per node, keeping arrival order.
+/** Pick the single line the thinking bubble should narrate: the live (or
+ * failed) phase, with a count sublabel once researchers report back. */
+function deriveActivity(
+  turns: ChatTurn[],
+  job: ResearchJob | null,
+  researchers: ResearcherResult[]
+): { label: string; detail?: string } {
+  const ordered = orderedNodeStatuses(turns);
+  const states = computePhaseStates(ordered, job, researchers);
+  const current =
+    states.find((s) => s.state === "failed") ??
+    states.find((s) => s.state === "live");
+  if (!current) return { label: "Thinking" };
+  return { label: current.label, detail: current.sublabel };
+}
+
+/** Latest phase per node, preserving arrival order. */
+function orderedNodeStatuses(turns: ChatTurn[]): NodeStatusTurn[] {
+  const steps = turns.filter(
+    (t): t is NodeStatusTurn =>
+      t.role === "assistant" && t.kind === "node_status"
+  );
   const ordered: NodeStatusTurn[] = [];
   const seen = new Map<string, number>();
   for (const s of steps) {
@@ -474,88 +664,7 @@ function NodeStatusCard({
       ordered[idx] = s;
     }
   }
-
-  if (ordered.length === 0) return null;
-
-  const states = computePhaseStates(ordered, job, researchers);
-  const current =
-    states.find((s) => s.state === "failed") ??
-    states.find((s) => s.state === "live");
-  if (!current) return null; // run is fully done — let the Document card carry the moment
-
-  const isFailed = current.state === "failed";
-
-  return (
-    <li className="panel-reveal max-w-[80%]">
-      <div
-        className={`flex items-center gap-3.5 rounded-full bg-bg-elev/55 px-4 py-1.5 ${
-          isFailed ? "ring-1 ring-bad/40" : ""
-        }`}
-      >
-        {/* Five-dot progress strip */}
-        <div
-          className="flex shrink-0 items-center gap-1.5"
-          role="progressbar"
-          aria-valuenow={current.phase}
-          aria-valuemin={1}
-          aria-valuemax={RUN_PHASES.length}
-        >
-          {states.map((s, i) => (
-            <PhaseDot key={i} state={s.state} />
-          ))}
-        </div>
-
-        {/* Divider */}
-        <span aria-hidden className="h-3 w-px shrink-0 bg-rule/15" />
-
-        {/* Current activity label */}
-        <span className="min-w-0 flex-1 truncate text-sm">
-          <span className={isFailed ? "text-bad" : "text-ink"}>
-            {current.label}
-          </span>
-          {current.sublabel ? (
-            <span className="ml-1.5 text-ink-faint">· {current.sublabel}</span>
-          ) : null}
-        </span>
-      </div>
-
-      {/* Inline error message for hard failures. */}
-      {current.error ? (
-        <p className="mt-1.5 px-4 text-xs leading-relaxed text-ink-faint">
-          {current.error}
-        </p>
-      ) : null}
-    </li>
-  );
-}
-
-/** Render one dot in the progress strip. */
-function PhaseDot({ state }: { state: StepState }) {
-  if (state === "done") {
-    return (
-      <span
-        aria-hidden
-        className="block h-1.5 w-1.5 rounded-full bg-accent/70"
-      />
-    );
-  }
-  if (state === "live") {
-    return (
-      <span aria-hidden className="relative grid h-1.5 w-1.5 place-items-center">
-        <span className="absolute inset-[-3px] rounded-full bg-accent/25 animate-pulse-dot" />
-        <span className="absolute inset-0 rounded-full bg-accent" />
-      </span>
-    );
-  }
-  if (state === "failed") {
-    return <span aria-hidden className="block h-1.5 w-1.5 rounded-full bg-bad" />;
-  }
-  return (
-    <span
-      aria-hidden
-      className="block h-1.5 w-1.5 rounded-full border border-ink-faint/30"
-    />
-  );
+  return ordered;
 }
 
 /** Derive the state of each of the 5 phases. Phase 1-3 read directly
@@ -570,7 +679,6 @@ function computePhaseStates(
   label: string;
   state: StepState;
   sublabel?: string;
-  error?: string;
 }[] {
   const NODE_TO_PHASE: Partial<Record<WorkflowNode, number>> = {
     clarify_with_user: 1,
@@ -585,7 +693,6 @@ function computePhaseStates(
     4: "pending",
     5: "pending",
   };
-  let errorBy: Partial<Record<number, string>> = {};
 
   // Phase 1 — read directly off SSE events.
   for (const s of ordered) {
@@ -593,7 +700,6 @@ function computePhaseStates(
     if (p === undefined) continue;
     stepState[p] =
       s.phase === "completed" ? "done" : s.phase === "failed" ? "failed" : "live";
-    if (s.phase === "failed" && s.error) errorBy[p] = s.error;
   }
 
   // Phase 1-3 fully done? Once they are, derive phase 4 + 5 from job/researchers.
@@ -601,16 +707,15 @@ function computePhaseStates(
 
   if (phase1to3Done) {
     if (job?.status === "failed") {
-      // Phase 2 failed at research/writing — mark phase 4 as the failed step.
       stepState[4] = "failed";
     } else if (job?.final_report || job?.status === "completed") {
       stepState[4] = "done";
       stepState[5] = "done";
     } else {
-      // Job still running (or not yet fetched — backend auto-spawned it).
-      // No reliable signal for "researchers done, now writing the brief",
-      // so phase 4 stays live until the job is completed; phase 5 then
-      // flips together with phase 4 as the Document card takes over.
+      // Job running (or just launched, row not fetched yet): phase 4 stays
+      // live until the job completes; phase 5 flips with it as the report
+      // lands. The awaiting-approval case never reaches the bubble, so it's
+      // safe to narrate phase 4 here unconditionally.
       stepState[4] = "live";
     }
   }
@@ -622,13 +727,7 @@ function computePhaseStates(
         researchers.length === 1 ? "agent" : "agents"
       } reported back`;
     }
-    return {
-      phase: id,
-      label,
-      state: stepState[id],
-      sublabel,
-      error: errorBy[id],
-    };
+    return { phase: id, label, state: stepState[id], sublabel };
   });
 }
 
@@ -661,17 +760,22 @@ function FollowupComposer({
   sending,
   error,
   onSend,
+  disabled = false,
+  placeholder = "Ask a follow-up about the report…",
 }: {
   sending: boolean;
   error: string | null;
   onSend: (text: string) => Promise<void> | void;
+  /** When true the composer is inert (run still in progress). */
+  disabled?: boolean;
+  placeholder?: string;
 }) {
   const [draft, setDraft] = useState("");
 
   function submit(e?: FormEvent) {
     e?.preventDefault();
     const text = draft.trim();
-    if (!text || sending) return;
+    if (!text || sending || disabled) return;
     void onSend(text);
     setDraft("");
   }
@@ -684,12 +788,16 @@ function FollowupComposer({
     }
   }
 
-  const canSend = !!draft.trim() && !sending;
+  const canSend = !!draft.trim() && !sending && !disabled;
 
   return (
-    <form onSubmit={submit} className="shrink-0 px-6 pt-2 pb-5">
-      <div className="mx-auto w-full max-w-[36rem]">
-        <div className="group/composer rounded-2xl bg-bg-elev px-4 pt-3 pb-2 transition-colors focus-within:bg-bg-elev/90">
+    <form onSubmit={submit} className="shrink-0 px-6 pt-3 pb-5">
+      <div className="mx-auto w-full max-w-[40rem]">
+        <div
+          className={`group/composer rounded-2xl bg-bg-elev px-4 pt-3 pb-2 transition-colors focus-within:bg-bg-elev/90 ${
+            disabled ? "opacity-60" : ""
+          }`}
+        >
           <textarea
             rows={1}
             value={draft}
@@ -700,13 +808,13 @@ function FollowupComposer({
               el.style.height = `${Math.min(el.scrollHeight, 180)}px`;
             }}
             onKeyDown={onKeyDown}
-            placeholder="Ask a follow-up about the report…"
-            disabled={sending}
-            className="block w-full resize-none bg-transparent text-[0.95rem] leading-relaxed text-ink placeholder:text-ink-faint/70 focus:outline-none disabled:opacity-50"
+            placeholder={placeholder}
+            disabled={sending || disabled}
+            className="block w-full resize-none bg-transparent text-[0.95rem] leading-relaxed text-ink placeholder:text-ink-faint/70 focus:outline-none disabled:cursor-not-allowed"
           />
           <div className="mt-2 flex items-center justify-between gap-3">
             <p className="font-mono text-[0.625rem] uppercase tracking-eyebrow text-ink-faint">
-              Grounded in the brief
+              {disabled ? "" : "Grounded in the brief"}
             </p>
             <button
               type="submit"

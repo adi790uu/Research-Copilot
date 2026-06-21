@@ -35,8 +35,7 @@ class ReportContent(BaseModel):
     """All sections required by the assignment brief.
 
     Order in the file matches the order they render in the PDF / artifact
-    panel. The keys here are reused as the `Literal` keys on
-    `state.ReportSectionName` — keep them aligned.
+    panel.
     """
 
     company_overview: ReportSection

@@ -101,6 +101,9 @@ export const NODES: WorkflowNode[] = [
 export function useWorkflowChat(sessionId: string): WorkflowChatState & {
   send: (payload: ChatTurnPayload, optimistic?: UserTurn) => Promise<void>;
   subscribe: () => Promise<void>;
+  /** Called once `POST /plan/approve` succeeds: flips into the running
+   * phase and marks the plan card as acted so it stops offering approval. */
+  markApproved: () => void;
   reset: () => void;
 } {
   const api = useApi();
@@ -188,6 +191,18 @@ export function useWorkflowChat(sessionId: string): WorkflowChatState & {
 
   const subscribe = useCallback(() => stream({ kind: "subscribe" }), [stream]);
 
+  const markApproved = useCallback(() => {
+    setState((s) => ({
+      ...s,
+      phase: "running",
+      turns: s.turns.map((t) =>
+        t.role === "assistant" && t.kind === "plan_ready"
+          ? { ...t, acted: true }
+          : t
+      ),
+    }));
+  }, []);
+
   const reset = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
@@ -198,8 +213,8 @@ export function useWorkflowChat(sessionId: string): WorkflowChatState & {
   // re-evaluate on every render. Identity only changes when state or one
   // of the callbacks actually changes.
   return useMemo(
-    () => ({ ...state, send: stream, subscribe, reset }),
-    [state, stream, subscribe, reset]
+    () => ({ ...state, send: stream, subscribe, markApproved, reset }),
+    [state, stream, subscribe, markApproved, reset]
   );
 }
 
@@ -244,21 +259,21 @@ function reduce(s: WorkflowChatState, ev: WorkflowEvent): WorkflowChatState {
         ],
       };
     case "plan_ready":
-      // Phase 2 just auto-spawned on the backend. Capture the job id so
-      // SessionDetail can flip into polling mode, and keep `phase` at
-      // "running" — there is no human-approval pause anymore.
+      // Graph 1 is done; the plan pauses for the user to review + approve.
+      // No job exists yet — `acted: false` keeps the card actionable until
+      // approval. (Legacy auto-spawn runs may still carry a job_id.)
       return {
         ...s,
-        phase: "running",
+        phase: "awaiting_plan_approval",
         plan: ev.plan,
-        jobId: ev.job_id,
+        jobId: ev.job_id ?? null,
         turns: [
           ...s.turns,
           {
             role: "assistant",
             kind: "plan_ready",
             plan: ev.plan,
-            acted: true,
+            acted: !!ev.job_id,
             at: ev.at,
           },
         ],

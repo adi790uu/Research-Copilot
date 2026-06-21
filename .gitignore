@@ -38,3 +38,5 @@ checkpoints.db
 
 # Internal planning (lives outside the repo)
 plan.md
+.serena
+.trigger

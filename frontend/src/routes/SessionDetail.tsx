@@ -34,6 +34,8 @@ export default function SessionDetail() {
   const [jobId, setJobId] = useState<string | null>(null);
   const [artifactOpen, setArtifactOpen] = useState(false);
   const [focus, setFocus] = useState<ArtifactFocus>(null);
+  const [approving, setApproving] = useState(false);
+  const [approveError, setApproveError] = useState<string | null>(null);
 
   // On cold-load of an in-flight phase-1 session, subscribe to SSE so any
   // retained events replay. Skip for `running` (phase-2) sessions to avoid
@@ -41,7 +43,10 @@ export default function SessionDetail() {
   useEffect(() => {
     if (!session.data) return;
     if (chat.turns.length > 0 || chat.streaming) return;
-    if (session.data.status === "awaiting_clarification") {
+    if (
+      session.data.status === "awaiting_clarification" ||
+      session.data.status === "awaiting_plan_approval"
+    ) {
       void chat.subscribe();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -124,6 +129,24 @@ export default function SessionDetail() {
     setFocus(target);
   }, []);
 
+  // Approve the plan: persists any edits, creates the phase-2 job + triggers
+  // the worker, then flips into polling mode. Idempotent on the backend
+  // (job_id key); the `approving` guard prevents double-fires from the UI.
+  const handleApprovePlan = useCallback(async () => {
+    if (approving || jobId) return;
+    setApproving(true);
+    setApproveError(null);
+    try {
+      const { job_id } = await api.sessions.approvePlan(id);
+      setJobId(job_id);
+      chat.markApproved();
+    } catch (e) {
+      setApproveError((e as Error).message ?? "Could not start research");
+    } finally {
+      setApproving(false);
+    }
+  }, [api, id, chat, approving, jobId]);
+
   // Follow-up chat over the finished brief. Enabled only when the job
   // has a final_report — the backend rejects POSTs otherwise.
   const reportReady = !!job?.final_report && job?.status === "completed";
@@ -151,9 +174,11 @@ export default function SessionDetail() {
   // loading state, producing a staggered/jarring reveal.
   useEffect(() => {
     if (initialLoading) return;
-    if (plan || chat.jobId || job) setArtifactOpen(true);
+    // The plan lives in its own modal now — only open the artifact workspace
+    // once research has actually started (sources / report incoming).
+    if (chat.jobId || job) setArtifactOpen(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [plan, chat.jobId, job, initialLoading]);
+  }, [chat.jobId, job, initialLoading]);
   const handleFollowupSend = useCallback(
     (text: string) => reportChat.send(text),
     [reportChat]
@@ -297,7 +322,9 @@ export default function SessionDetail() {
         streaming={chat.streaming}
         onAnswers={handleAnswers}
         onOpenReport={() => handleOpenWorkspace("report")}
-        onOpenPlan={() => handleOpenWorkspace("plan")}
+        onApprovePlan={handleApprovePlan}
+        approving={approving}
+        approveError={approveError}
         error={chat.error}
         followupEnabled={reportReady}
         followupTurns={reportChat.turns}
@@ -315,7 +342,6 @@ export default function SessionDetail() {
         onClose={() => setArtifactOpen(false)}
         focus={focus}
         onFocusHandled={() => setFocus(null)}
-        plan={plan}
         job={job}
         researchers={researchers}
         phase={phase}

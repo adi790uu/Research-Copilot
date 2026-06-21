@@ -117,9 +117,37 @@ def _sse_format(event: WorkflowEvent) -> bytes:
     return f"event: {event.type}\ndata: {payload}\n\n".encode()
 
 
-# Plan editing / approval routes were removed when phase 2 became
-# auto-spawned from the SSE handler. The service-layer methods stay around
-# (`save_plan_edits`, `approve_plan`) but are no longer reachable from HTTP.
+# ─── Plan approval → trigger phase-2 worker ─────────────────────────────────
+
+
+class PlanApproval(BaseModel):
+    """Approve (and optionally edit) the plan, then launch phase 2."""
+
+    # When provided, the edited plan is saved to the checkpoint before launch.
+    plan: dict | None = None
+
+
+@router.post("/plan/approve")
+async def approve_plan(
+    session_id: str,
+    payload: PlanApproval,
+    request: Request,
+    user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+) -> dict:
+    """Create the research job and trigger the external worker.
+
+    Returns `{"job_id": ...}`; the frontend then polls `GET /jobs/{id}`.
+    """
+    owned = await SessionRepository(db, user.id).get(session_id)
+    if owned is None:
+        raise NotFoundError(f"Session {session_id} not found")
+
+    svc = _service(request)
+    if payload.plan is not None:
+        await svc.save_plan_edits(session_id=session_id, user_id=user.id, plan=payload.plan)
+    job_id = await svc.approve_plan(session_id=session_id, user_id=user.id)
+    return {"job_id": job_id}
 
 
 # ─── Session-scoped reads ───────────────────────────────────────────────────

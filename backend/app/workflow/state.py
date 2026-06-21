@@ -2,49 +2,14 @@
 
 from __future__ import annotations
 
-import operator
-from typing import Annotated, Any, Literal, TypedDict
+from typing import Literal
 
-from langchain_core.messages import MessageLikeRepresentation
 from langgraph.graph import MessagesState
 from pydantic import BaseModel, Field
-
-from app.domain.report import ReportContent, Source
-
-# ----- Reducers ----------------------------------------------------------
 
 SourceStrategy = Literal["company_site_first", "external_first", "both_parallel"]
 ToolsRouting = Literal["company_site", "web", "both"]
 Priority = Literal["depth", "breadth"]
-
-# Keys MUST stay in sync with `app.domain.report.ReportContent`. Used by
-# the reviewer prompt to iterate per-section and by the prompts module to
-# expose a stable catalog string.
-ReportSectionName = Literal[
-    "company_overview",
-    "products_and_services",
-    "target_customers",
-    "business_signals",
-    "risks_and_challenges",
-    "discovery_questions",
-    "outreach_strategy",
-    "unknowns",
-]
-
-
-def override_reducer(current: list[Any], new: Any) -> list[Any]:
-    """Append-by-default reducer; sentinel `{"type": "override", "value": [...]}` replaces."""
-    if isinstance(new, dict) and new.get("type") == "override":
-        value = new.get("value", [])
-        return list(value) if isinstance(value, list) else [value]
-    return list(operator.add(current or [], new or []))
-
-
-def _dedup_sources(left: list[Source], right: list[Source]) -> list[Source]:
-    seen: dict[str, Source] = {s.url: s for s in (left or [])}
-    for s in right or []:
-        seen.setdefault(s.url, s)
-    return list(seen.values())
 
 
 # ----- Structured outputs ------------------------------------------------
@@ -104,36 +69,11 @@ class ResearchPlan(BaseModel):
     )
 
 
-class ConductResearch(BaseModel):
-    """Delegate one research task to a sub-agent. Each call spawns an independent researcher."""
-
-    research_topic: str = Field(
-        description=(
-            "Detailed, standalone research instructions. Must name the company, "
-            "the angle, and what good output looks like."
-        )
-    )
-    tools_to_use: ToolsRouting = Field(
-        description="company_site | web | both.",
-    )
-
-
-class ResearchComplete(BaseModel):
-    """Call when research is sufficient to write the final report."""
-
-
-class _PolishedSection(BaseModel):
-    """Pass-2 review output for a single section. Used by `final_report.py`."""
-
-    content: str
-    source_ids: list[str] = Field(default_factory=list)
-
-
 # ----- LangGraph states --------------------------------------------------
 
 
 class AgentState(MessagesState):
-    """Top-level state for the company-research graph.
+    """Top-level state for the company-research graph (Graph 1).
 
     `research_plan` is stored as a plain dict (the `ResearchPlan.model_dump`
     output) rather than the Pydantic instance — LangGraph's msgpack
@@ -148,57 +88,18 @@ class AgentState(MessagesState):
     website: str
     objective: str
 
-    supervisor_messages: Annotated[list[MessageLikeRepresentation], override_reducer]
     research_brief: str | None
     research_plan: dict | None
-    notes: Annotated[list[str], override_reducer]
-    raw_notes: Annotated[list[str], override_reducer]
-    sources: Annotated[list[Source], _dedup_sources]
-    # Structured 8-section report produced by `final_report_generation`.
-    # The model_dump'd shape lands in `research_jobs.final_report` as JSON
-    # so the frontend can render the same structure it sees here.
-    report: ReportContent | None
-
-
-class SupervisorState(TypedDict, total=False):
-    company_name: str
-    website: str
-    supervisor_messages: Annotated[list[MessageLikeRepresentation], override_reducer]
-    research_brief: str
-    notes: Annotated[list[str], override_reducer]
-    raw_notes: Annotated[list[str], override_reducer]
-    sources: Annotated[list[Source], _dedup_sources]
-    research_iterations: int
-
-
-class ResearcherState(TypedDict, total=False):
-    researcher_messages: Annotated[list[MessageLikeRepresentation], operator.add]
-    research_topic: str
-    tools_to_use: ToolsRouting
-    company_name: str
-    website: str
-    tool_call_iterations: int
-    compressed_research: str
-    raw_notes: list[str]
-    sources: list[Source]
 
 
 __all__ = [
     "AgentState",
     "ClarificationQuestion",
     "ClarifyWithUser",
-    "ConductResearch",
     "Priority",
-    "ReportSectionName",
     "ResearchBrief",
-    "ResearchComplete",
-    "ResearcherState",
     "ResearchPlan",
     "ResearchSubtopic",
-    "Source",
     "SourceStrategy",
-    "SupervisorState",
     "ToolsRouting",
-    "_PolishedSection",
-    "override_reducer",
 ]

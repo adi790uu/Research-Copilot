@@ -8,6 +8,7 @@ import type {
   FollowupMessage,
   ResearchJob,
   ResearchJobEvent,
+  ResearchPlan,
   ResearchTask,
   ResearcherResult,
   Session,
@@ -99,6 +100,12 @@ interface ApiClient {
       payload: ChatTurnPayload,
       signal?: AbortSignal
     ) => Promise<Response>;
+    /** Approve (and optionally edit) the plan, creating + triggering the
+     * phase-2 job. Returns the new job id to start polling. */
+    approvePlan: (
+      id: string,
+      plan?: ResearchPlan
+    ) => Promise<{ job_id: string }>;
     /** Most-recent job for this session (404 if none). */
     latestJob: (id: string) => Promise<ResearchJob>;
     listJobs: (id: string) => Promise<ResearchJob[]>;
@@ -157,6 +164,11 @@ function buildClient(fetcher: Fetcher, getToken: TokenSource): ApiClient {
           signal,
         });
       },
+      approvePlan: (id, plan) =>
+        fetcher<{ job_id: string }>(`/sessions/${id}/plan/approve`, {
+          method: "POST",
+          body: JSON.stringify(plan ? { plan } : {}),
+        }),
       latestJob: (id) => fetcher<ResearchJob>(`/sessions/${id}/job`),
       listJobs: (id) => fetcher<ResearchJob[]>(`/sessions/${id}/jobs`),
       listMessages: (id) =>

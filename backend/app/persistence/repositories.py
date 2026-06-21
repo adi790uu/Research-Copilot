@@ -127,20 +127,6 @@ class SessionRepository:
         await self._db.refresh(row)
         return row
 
-    async def touch(
-        self, session_id: str, *, last_message: str | None = None, title: str | None = None
-    ) -> SessionORM | None:
-        row = await self.get(session_id)
-        if row is None:
-            return None
-        if last_message is not None:
-            row.last_message = last_message[:500]
-        if title is not None:
-            row.title = title[:200]
-        await self._db.flush()
-        await self._db.refresh(row)
-        return row
-
 
 class SessionMessageRepository:
     """Follow-up chat history (post-report). Scoped to a session — callers

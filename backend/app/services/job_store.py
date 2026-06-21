@@ -1,17 +1,15 @@
-"""Persistence for research jobs and their progress artefacts.
+"""Read access to research jobs and their progress artefacts.
 
-Each function opens its own AsyncSession because callers are mixed-mode:
-the foreground SSE path runs inside a request, the background graph stream
-runs in a detached asyncio.Task with no request scope. Keeping the store
-self-contained lets both call sites use it identically.
+The phase-2 worker (TypeScript Trigger.dev task) writes job results,
+researcher rows, events and tasks straight to the shared Postgres. The
+Python backend only *creates* the pending job (on plan approval) and
+*reads* progress back for the API, so this module is read-mostly.
 """
 
 from __future__ import annotations
 
 import json
-import logging
 import uuid
-from typing import Any
 
 from sqlalchemy import select
 
@@ -22,29 +20,6 @@ from app.persistence.models import (
     ResearchJobResearcherORM,
     ResearchTaskORM,
 )
-
-logger = logging.getLogger(__name__)
-
-
-def _jsonable(obj: Any) -> Any:
-    """Best-effort conversion for sources/event payloads."""
-    try:
-        from pydantic import BaseModel
-
-        if isinstance(obj, BaseModel):
-            return obj.model_dump(mode="json")
-    except ImportError:
-        pass
-    if isinstance(obj, list):
-        return [_jsonable(x) for x in obj]
-    if isinstance(obj, dict):
-        return {k: _jsonable(v) for k, v in obj.items()}
-    if isinstance(obj, (str, int, float, bool)) or obj is None:
-        return obj
-    obj_dict = getattr(obj, "__dict__", None)
-    if isinstance(obj_dict, dict):
-        return {k: _jsonable(v) for k, v in obj_dict.items() if not k.startswith("_")}
-    return str(obj)
 
 
 # ---- jobs ------------------------------------------------------------------
@@ -73,43 +48,6 @@ async def update_job_status(job_id: str, status: str) -> None:
         if row is None:
             return
         row.status = status
-        await db.commit()
-
-
-async def update_job_result(
-    job_id: str, final_report: str, sources: list[Any] | None = None
-) -> None:
-    sessionmaker = get_sessionmaker()
-    async with sessionmaker() as db:
-        row = await db.get(ResearchJobORM, job_id)
-        if row is None:
-            return
-        row.status = "completed"
-        row.final_report = final_report
-        row.sources = _jsonable(sources or [])
-        await db.commit()
-
-
-async def update_job_report_pdf_key(job_id: str, report_pdf_key: str) -> None:
-    sessionmaker = get_sessionmaker()
-    async with sessionmaker() as db:
-        row = await db.get(ResearchJobORM, job_id)
-        if row is None:
-            return
-        row.report_pdf_key = report_pdf_key
-        await db.commit()
-
-
-async def append_job_event(
-    job_id: str, event_type: str, data: dict[str, Any]
-) -> None:
-    sessionmaker = get_sessionmaker()
-    async with sessionmaker() as db:
-        db.add(
-            ResearchJobEventORM(
-                job_id=job_id, event_type=event_type, data=_jsonable(data)
-            )
-        )
         await db.commit()
 
 
@@ -161,22 +99,6 @@ def _serialize_job(row: ResearchJobORM) -> dict:
 # ---- researchers -----------------------------------------------------------
 
 
-async def append_researcher_result(
-    job_id: str, topic: str, summary: str, sources: list[Any] | None = None
-) -> None:
-    sessionmaker = get_sessionmaker()
-    async with sessionmaker() as db:
-        db.add(
-            ResearchJobResearcherORM(
-                job_id=job_id,
-                topic=topic,
-                summary=summary,
-                sources=_jsonable(sources or []),
-            )
-        )
-        await db.commit()
-
-
 async def get_job_researchers(job_id: str) -> list[dict]:
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as db:
@@ -220,57 +142,6 @@ async def get_job_events(job_id: str) -> list[dict]:
 
 
 # ---- tasks -----------------------------------------------------------------
-
-
-async def create_task(job_id: str, research_topic: str) -> str:
-    task_id = str(uuid.uuid4())
-    sessionmaker = get_sessionmaker()
-    async with sessionmaker() as db:
-        title = research_topic[:200] if research_topic else "(untitled)"
-        db.add(
-            ResearchTaskORM(
-                id=task_id,
-                job_id=job_id,
-                title=title,
-                description=research_topic or "",
-                status="running",
-            )
-        )
-        await db.commit()
-    return task_id
-
-
-async def complete_task(task_id: str) -> None:
-    sessionmaker = get_sessionmaker()
-    async with sessionmaker() as db:
-        row = await db.get(ResearchTaskORM, task_id)
-        if row is None:
-            return
-        row.status = "completed"
-        await db.commit()
-
-
-async def fail_task(task_id: str) -> None:
-    sessionmaker = get_sessionmaker()
-    async with sessionmaker() as db:
-        row = await db.get(ResearchTaskORM, task_id)
-        if row is None:
-            return
-        row.status = "failed"
-        await db.commit()
-
-
-async def fail_running_tasks(job_id: str) -> None:
-    sessionmaker = get_sessionmaker()
-    async with sessionmaker() as db:
-        result = await db.execute(
-            select(ResearchTaskORM).where(
-                ResearchTaskORM.job_id == job_id, ResearchTaskORM.status == "running"
-            )
-        )
-        for row in result.scalars().all():
-            row.status = "failed"
-        await db.commit()
 
 
 async def get_job_tasks(job_id: str) -> list[dict]:

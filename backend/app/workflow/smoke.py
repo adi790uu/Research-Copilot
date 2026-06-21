@@ -5,8 +5,9 @@ Usage:
         --website https://acme.example.com \\
         --objective "Evaluate as integration partner"
 
-By default uses mock LLM + search providers so it runs offline. Pass
-`--real` to use OpenAI + Tavily (requires OPENAI_API_KEY and TAVILY_API_KEY).
+Drives Graph 1 (clarify → brief → plan) end-to-end. The model is read from
+config (`OPENAI_API_KEY` / `OPENAI_MODEL`); with no key set the ChatOpenAI
+calls will fail, so point it at a real key or a local Models endpoint.
 """
 
 from __future__ import annotations
@@ -19,50 +20,19 @@ from typing import Any
 from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.memory import MemorySaver
 
-from app.core.config import get_settings
-from app.providers.factory import build_providers
-from app.providers.llm.base import LLMProvider
-from app.providers.llm.openai import OpenAIProvider
-from app.providers.search.base import SearchProvider
-from app.providers.search.tavily import TavilySearchProvider
-from app.workflow.deps import WorkflowDeps
 from app.workflow.graph import build_graph
 
 
-def _real_providers() -> tuple[LLMProvider, SearchProvider]:
-    settings = get_settings()
-    if not settings.openai_api_key:
-        raise RuntimeError("OPENAI_API_KEY required for --real")
-    if not settings.tavily_api_key:
-        raise RuntimeError("TAVILY_API_KEY required for --real")
-    return (
-        OpenAIProvider(
-            settings.openai_api_key,
-            settings.openai_model,
-            base_url=settings.openai_base_url or None,
-        ),
-        TavilySearchProvider(settings.tavily_api_key),
-    )
-
-
 async def _run(args: argparse.Namespace) -> dict[str, Any]:
-    settings = get_settings()
-    if args.real:
-        llm, search = _real_providers()
-    else:
-        llm, search = build_providers(settings, company_hint=args.company)
-
-    deps = WorkflowDeps(llm=llm, search=search)
-    # In-memory checkpointer so the run can resume past `interrupt_after`.
-    graph = build_graph(deps, checkpointer=MemorySaver())
+    # In-memory checkpointer so the run can resume past the plan interrupt.
+    graph = build_graph(checkpointer=MemorySaver())
 
     config = {
         "configurable": {
             "thread_id": "smoke",
-            "search_provider": search,
             "company_name": args.company,
             "website": args.website,
-            # Disable clarification for smoke runs so we always reach the report.
+            # Disable clarification for smoke runs so we always reach the plan.
             "allow_clarification": False,
         }
     }
@@ -76,35 +46,24 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
         "company_name": args.company,
         "website": args.website,
         "objective": args.objective,
-        "supervisor_messages": {"type": "override", "value": []},
-        "notes": {"type": "override", "value": []},
-        "raw_notes": {"type": "override", "value": []},
     }
 
-    # Drive past the create_research_plan interrupt automatically.
-    await graph.ainvoke(initial, config=config)
-    final = await graph.ainvoke(None, config=config)
+    final = await graph.ainvoke(initial, config=config)
 
     return {
         "company": args.company,
-        "final_report": final.get("final_report"),
-        "sources_count": len(final.get("sources", []) or []),
+        "research_plan": final.get("research_plan"),
     }
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run the company-research workflow end-to-end.")
+    parser = argparse.ArgumentParser(description="Run the company-research Graph 1 end-to-end.")
     parser.add_argument("company", help="Company name")
     parser.add_argument("--website", default="https://example.com", help="Company website")
     parser.add_argument(
         "--objective",
         default="Evaluate as a potential customer or integration partner.",
         help="Seller objective for the run",
-    )
-    parser.add_argument(
-        "--real",
-        action="store_true",
-        help="Use real OpenAI + Tavily providers (requires keys)",
     )
     args = parser.parse_args()
     result = asyncio.run(_run(args))

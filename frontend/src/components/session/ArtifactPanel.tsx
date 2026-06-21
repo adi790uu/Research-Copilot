@@ -3,27 +3,25 @@ import { useEffect, useRef, useState } from "react";
 import { useApi } from "../../lib/api";
 import type {
   ResearchJob,
-  ResearchPlan,
   ResearcherResult,
   Source,
 } from "../../lib/types";
 import type { RunPhase } from "../../hooks/useWorkflowChat";
-import { PlanArtifact } from "./PlanArtifact";
 import { ReportView } from "./ReportView";
 
 /**
  * Vertical timeline workspace. No tabs — every artifact stacks in run order:
  *
- *   ● Research plan created           → expand → PlanArtifact (read-only)
  *   ● Gathered N sources              → expand → top-domains + per-subquery list
  *   ● Researched: <subquery>          → expand → that researcher's sources + summary
  *   ● Research report is ready        → expand → ReportView + PDF
  *
- * The parent passes `focus` to scroll the panel to a specific block
- * (e.g. "report" when the chat report card is clicked).
+ * The plan is shown inline in the chat; the workspace holds only the sources
+ * and the final report. `focus` scrolls to the report block when the chat
+ * report card is clicked.
  */
 
-export type ArtifactFocus = "plan" | "report" | null;
+export type ArtifactFocus = "report" | null;
 
 interface Props {
   sessionId: string;
@@ -32,7 +30,6 @@ interface Props {
   focus: ArtifactFocus;
   onFocusHandled: () => void;
 
-  plan: ResearchPlan | null;
   job: ResearchJob | null;
   researchers: ResearcherResult[];
   phase: RunPhase;
@@ -46,7 +43,6 @@ export function ArtifactPanel({
   onClose,
   focus,
   onFocusHandled,
-  plan,
   job,
   researchers,
   phase,
@@ -85,20 +81,6 @@ export function ArtifactPanel({
 
       <div className="overflow-y-auto px-6 py-6">
         <ol className="space-y-4">
-          {plan && (
-            <TimelineStep
-              id="plan"
-              icon="●"
-              tone={reportReady || jobFailed ? "done" : "active"}
-              label="Research plan created"
-              focus={focus}
-              onFocusHandled={onFocusHandled}
-              defaultOpen={false}
-            >
-              <PlanArtifact plan={plan} />
-            </TimelineStep>
-          )}
-
           {(totalSources > 0 || researchers.length > 0) && (
             <TimelineStep
               id="sources"

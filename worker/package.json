@@ -1,0 +1,28 @@
+{
+  "name": "deep-research-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "trigger:dev": "NODE_OPTIONS=--no-deprecation trigger dev --env-file .env",
+    "trigger:deploy": "trigger deploy"
+  },
+  "dependencies": {
+    "@langchain/core": "^0.3.0",
+    "@langchain/langgraph": "^0.2.0",
+    "@langchain/openai": "^0.3.0",
+    "@trigger.dev/sdk": "^4.4.6",
+    "drizzle-orm": "^0.44.0",
+    "pg": "^8.13.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@trigger.dev/build": "^4.4.6",
+    "@types/node": "^22.10.2",
+    "@types/pg": "^8.11.0",
+    "drizzle-kit": "^0.31.10",
+    "trigger.dev": "^4.4.6",
+    "typescript": "^5.7.2"
+  }
+}
