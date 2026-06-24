@@ -8,7 +8,7 @@ import { ThemeToggle } from "../ui/ThemeToggle";
 export function MarketingShell({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-screen flex flex-col">
-      <header className="sticky top-0 z-20 backdrop-blur-md bg-bg/70 border-b border-rule/8">
+      <header className="sticky top-0 z-20 backdrop-blur-md bg-bg/70 hairline-b">
         <div className="mx-auto max-w-6xl px-6 md:px-10 h-14 flex items-center justify-between">
           <Wordmark />
           <nav className="flex items-center gap-5">
@@ -53,7 +53,7 @@ export function MarketingShell({ children }: { children: ReactNode }) {
 
       <main className="flex-1">{children}</main>
 
-      <footer className="mt-auto border-t border-rule/8">
+      <footer className="mt-auto hairline-t">
         <div className="mx-auto max-w-6xl px-6 md:px-10 py-10 grid gap-6 sm:grid-cols-3">
           <div>
             <Wordmark as="static" />

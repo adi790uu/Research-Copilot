@@ -169,6 +169,42 @@ body::after {
   color: rgb(var(--ink-faint));
 }
 
+/* ---------- Dividers ---------- */
+
+/* Edge-fading hairline. A full-bleed cream rule (the dark theme's --rule is
+ * near-white) reads cheap, so the dark theme draws a warm, faded line that
+ * dissolves at both ends; the light theme keeps its crisp ink rule. */
+.divider-x {
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgb(var(--rule) / 0.12),
+    transparent
+  );
+}
+[data-theme="dark"] .divider-x {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgb(var(--ink-faint) / 0.55),
+    transparent
+  );
+}
+
+.hairline-t {
+  border-top: 1px solid rgb(var(--rule) / 0.12);
+}
+.hairline-b {
+  border-bottom: 1px solid rgb(var(--rule) / 0.12);
+}
+[data-theme="dark"] .hairline-t {
+  border-top-color: rgb(var(--ink-faint) / 0.3);
+}
+[data-theme="dark"] .hairline-b {
+  border-bottom-color: rgb(var(--ink-faint) / 0.3);
+}
+
 /* ---------- Components ---------- */
 
 @layer components {
