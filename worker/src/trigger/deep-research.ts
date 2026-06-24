@@ -1,11 +1,11 @@
 import { logger, schemaTask } from "@trigger.dev/sdk/v3";
 import { z } from "zod";
-import { getSession, updateJobResult, updateJobStatus } from "@/db/jobs";
+import { getBrief, updateJobResult, updateJobStatus } from "@/db/jobs";
 import { graph2 } from "@/graph";
 
 const payloadSchema = z.object({
   jobId: z.string(),
-  sessionId: z.string(),
+  briefId: z.string(),
   userId: z.string(),
   researchPlan: z.string().min(1),
 });
@@ -43,29 +43,29 @@ export const deepResearch = schemaTask({
   schema: payloadSchema,
   maxDuration: 1800,
   run: async (payload) => {
-    const { jobId, sessionId, userId, researchPlan } = payload;
-    logger.info("Starting deep research", { jobId, sessionId });
+    const { jobId, briefId, userId, researchPlan } = payload;
+    logger.info("Starting deep research", { jobId, briefId });
 
     await updateJobStatus(jobId, "running");
     try {
-      const session = await getSession(sessionId);
-      if (!session) throw new Error(`Session ${sessionId} not found`);
+      const brief = await getBrief(briefId);
+      if (!brief) throw new Error(`Brief ${briefId} not found`);
 
-      const researchBrief = renderBrief(researchPlan, session.objective);
+      const researchBrief = renderBrief(researchPlan, brief.objective);
       const result = await graph2.invoke(
         {
-          companyName: session.companyName,
-          website: session.website,
-          objective: session.objective,
+          companyName: brief.companyName,
+          website: brief.website,
+          objective: brief.objective,
           researchBrief,
         },
         {
           configurable: {
             jobId,
-            sessionId,
+            briefId,
             userId,
-            companyName: session.companyName,
-            website: session.website,
+            companyName: brief.companyName,
+            website: brief.website,
           },
         },
       );

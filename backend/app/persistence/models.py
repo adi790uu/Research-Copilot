@@ -35,21 +35,22 @@ class UserORM(Base):
         DateTime(timezone=True), nullable=False, default=_utcnow
     )
 
-    sessions: Mapped[list["SessionORM"]] = relationship(
+    briefs: Mapped[list["BriefORM"]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
         lazy="selectin",
     )
 
 
-class SessionORM(Base):
-    """A session IS a chat thread. `id` is the LangGraph thread_id.
+class BriefORM(Base):
+    """A brief IS a chat thread. `id` is the LangGraph thread_id.
 
-    Conversation messages live in the LangGraph checkpointer, not in this DB.
-    This row keeps cheap metadata for chat-list and routing.
+    Conversation messages live both in the LangGraph checkpointer and the
+    `messages` table. `clarification_question` holds the gate's questions plus
+    an `answered` flag so we don't re-prompt the user on reload.
     """
 
-    __tablename__ = "sessions"
+    __tablename__ = "briefs"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     user_id: Mapped[str] = mapped_column(
@@ -62,8 +63,9 @@ class SessionORM(Base):
     website: Mapped[str] = mapped_column(String(2048), nullable=False)
     objective: Mapped[str] = mapped_column(Text, nullable=False)
     title: Mapped[str] = mapped_column(String(200), nullable=False, default="New research")
-    last_message: Mapped[str] = mapped_column(String(500), nullable=False, default="")
     status: Mapped[str] = mapped_column(String(40), nullable=False, default="pending")
+    # {"answered": bool, "questions": [...]} — null until the gate asks.
+    clarification_question: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow
     )
@@ -71,54 +73,52 @@ class SessionORM(Base):
         DateTime(timezone=True), nullable=False, default=_utcnow, onupdate=_utcnow
     )
 
-    user: Mapped[UserORM] = relationship(back_populates="sessions")
+    user: Mapped[UserORM] = relationship(back_populates="briefs")
     jobs: Mapped[list["ResearchJobORM"]] = relationship(
-        back_populates="session",
+        back_populates="brief",
         cascade="all, delete-orphan",
         order_by="ResearchJobORM.created_at.desc()",
         lazy="selectin",
     )
-    messages: Mapped[list["SessionMessageORM"]] = relationship(
-        back_populates="session",
+    messages: Mapped[list["MessageORM"]] = relationship(
+        back_populates="brief",
         cascade="all, delete-orphan",
-        order_by="SessionMessageORM.created_at",
+        order_by="MessageORM.created_at",
         lazy="selectin",
     )
 
 
-class SessionMessageORM(Base):
-    """Follow-up chat turns over a finished research brief.
+class MessageORM(Base):
+    """Chat turns for a brief: phase-1 intro/clarification plus post-report follow-ups."""
 
-    Only populated after a session's research_job hits status='completed';
-    the report + sources are the RAG context the assistant answers from.
-    Separate from the LangGraph checkpoint (which holds clarify/plan/etc.).
-    """
-
-    __tablename__ = "session_messages"
+    __tablename__ = "messages"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    session_id: Mapped[str] = mapped_column(
+    brief_id: Mapped[str] = mapped_column(
         String(32),
-        ForeignKey("sessions.id", ondelete="CASCADE"),
+        ForeignKey("briefs.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     role: Mapped[str] = mapped_column(String(16), nullable=False)  # 'user' | 'assistant'
+    kind: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="followup", index=True
+    )  # 'workflow' (phase-1 flow) | 'followup' (post-report chat)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow
     )
 
-    session: Mapped[SessionORM] = relationship(back_populates="messages")
+    brief: Mapped[BriefORM] = relationship(back_populates="messages")
 
 
 class ResearchJobORM(Base):
     __tablename__ = "research_jobs"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    session_id: Mapped[str] = mapped_column(
+    brief_id: Mapped[str] = mapped_column(
         String(32),
-        ForeignKey("sessions.id", ondelete="CASCADE"),
+        ForeignKey("briefs.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -140,7 +140,7 @@ class ResearchJobORM(Base):
         DateTime(timezone=True), nullable=False, default=_utcnow, onupdate=_utcnow
     )
 
-    session: Mapped[SessionORM] = relationship(back_populates="jobs")
+    brief: Mapped[BriefORM] = relationship(back_populates="jobs")
     events: Mapped[list["ResearchJobEventORM"]] = relationship(
         back_populates="job",
         cascade="all, delete-orphan",

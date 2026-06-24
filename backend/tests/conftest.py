@@ -1,7 +1,10 @@
+import asyncio
 import socket
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from urllib.parse import urlparse
 
+import asyncpg
 import pytest
 from fastapi.testclient import TestClient
 
@@ -40,5 +43,21 @@ def client(fake_user: CurrentUser) -> Iterator[TestClient]:
     app = create_app()
     app.dependency_overrides[get_current_user] = lambda: fake_user
     with TestClient(app) as c:
+        asyncio.run(_seed_user(fake_user))
         yield c
     app.dependency_overrides.clear()
+
+
+async def _seed_user(user: CurrentUser) -> None:
+    """Ensure the fake user row exists so brief FKs resolve."""
+    url = get_settings().database_url.replace("+asyncpg", "")
+    conn = await asyncpg.connect(url)
+    try:
+        now = datetime.now(UTC)
+        await conn.execute(
+            "INSERT INTO users (id, email, password_hash, created_at, updated_at, last_seen_at) "
+            "VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (id) DO NOTHING",
+            user.id, user.email, "x", now, now, now,
+        )
+    finally:
+        await conn.close()

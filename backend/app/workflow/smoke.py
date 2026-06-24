@@ -30,23 +30,15 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
     config = {
         "configurable": {
             "thread_id": "smoke",
-            "company_name": args.company,
-            "website": args.website,
             # Disable clarification for smoke runs so we always reach the plan.
             "allow_clarification": False,
         }
     }
 
     seed_text = (
-        f"Company: {args.company}\nWebsite: {args.website}\nObjective: {args.objective}"
+        f"Company Name: {args.company}\nWebsite: {args.website}\nObjective: {args.objective}"
     )
-    initial = {
-        "messages": [HumanMessage(content=seed_text)],
-        "session_id": "smoke",
-        "company_name": args.company,
-        "website": args.website,
-        "objective": args.objective,
-    }
+    initial = {"messages": [HumanMessage(content=seed_text)]}
 
     final = await graph.ainvoke(initial, config=config)
 

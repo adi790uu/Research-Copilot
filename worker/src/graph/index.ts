@@ -6,10 +6,13 @@ import {
   StateGraph,
 } from "@langchain/langgraph";
 import { LIMITS } from "@/config";
+import { appendJobEvent } from "@/db/jobs";
 import { finalReportNode } from "@/graph/report";
 import { Graph2Annotation, type Graph2State } from "@/graph/state";
 import { supervisorGraph } from "@/graph/supervisor";
 import { leadResearcherPrompt, todayStr } from "@/prompts";
+
+type Configurable = { jobId?: string };
 
 // Runs the supervisor subgraph seeded with the brief/plan, then surfaces its
 // notes + sources to the top-level state for the report node.
@@ -17,6 +20,9 @@ async function researchSupervisorNode(
   state: Graph2State,
   config: LangGraphRunnableConfig,
 ): Promise<Partial<Graph2State>> {
+  const jobId = (config.configurable as Configurable | undefined)?.jobId;
+  if (jobId) await appendJobEvent(jobId, "research_started");
+
   const seed = [
     new SystemMessage(
       leadResearcherPrompt({
@@ -41,6 +47,7 @@ async function researchSupervisorNode(
     config,
   );
 
+  if (jobId) await appendJobEvent(jobId, "report_started");
   return { notes: res.notes, rawNotes: res.rawNotes, sources: res.sources };
 }
 

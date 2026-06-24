@@ -1,4 +1,4 @@
-export type SessionStatus =
+export type BriefStatus =
   | "pending"
   | "running"
   | "awaiting_clarification"
@@ -6,24 +6,32 @@ export type SessionStatus =
   | "completed"
   | "failed";
 
-export interface Session {
+/** Persisted clarification state on a brief. Survives reloads so the
+ * clarification card can be re-rendered without a live SSE stream. */
+export interface ClarificationState {
+  answered: boolean;
+  questions: ClarificationQuestion[];
+}
+
+export interface Brief {
   id: string;
   company_name: string;
   website: string;
   objective: string;
-  status: SessionStatus;
+  status: BriefStatus;
+  clarification_question?: ClarificationState | null;
   created_at: string;
   updated_at: string;
 }
 
-export interface SessionCreate {
+export interface BriefCreate {
   company_name: string;
   website: string;
   objective: string;
 }
 
-export interface SessionPage {
-  items: Session[];
+export interface BriefPage {
+  items: Brief[];
   total: number;
   limit: number;
   offset: number;
@@ -39,9 +47,9 @@ export interface User {
 
 export interface ActivitySummary {
   user: User;
-  session_count: number;
+  brief_count: number;
   job_count: number;
-  recent_sessions: Session[];
+  recent_briefs: Brief[];
 }
 
 // ---------------------------------------------------------------------------
@@ -59,6 +67,13 @@ export type WorkflowNode =
 export interface ClarificationQuestion {
   question: string;
   suggested_answers: string[];
+  /** The user's pick, once they've answered (persisted on the brief). */
+  answer?: string | null;
+}
+
+export interface ClarificationAnswer {
+  question: string;
+  answer: string;
 }
 
 export type ResearchSubtopicTools = "company_site" | "web" | "both";
@@ -78,7 +93,7 @@ export interface ResearchPlan {
 }
 
 interface BaseEvent {
-  session_id: string;
+  brief_id: string;
   at: string;
 }
 
@@ -111,7 +126,7 @@ export interface PlanReadyEvent extends BaseEvent {
   plan: ResearchPlan;
   /** Set only on legacy auto-spawn runs. In the current flow the plan
    * pauses for human approval and no job exists yet — the frontend calls
-   * `POST /sessions/{id}/plan/approve` to create it. */
+   * `POST /briefs/{id}/plan/approve` to create it. */
   job_id?: string | null;
 }
 export interface RunFailedEvent extends BaseEvent {
@@ -176,16 +191,21 @@ export interface ReportContent {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 1 chat turn — POST /sessions/{id}/chat, response body is SSE.
+// Phase 1 chat turn — POST /briefs/{id}/chat, response body is SSE.
 // ---------------------------------------------------------------------------
 
 export type ChatTurnKind = "start" | "answer" | "subscribe";
 
 export interface ChatTurnPayload {
   kind: ChatTurnKind;
-  /** Required when kind === "answer". Free-form text appended as a new
-   * HumanMessage (typically a joined list of clarification answers). */
+  /** Sent as a new HumanMessage. On `start` this carries the labeled intro
+   * (company/website/objective); on `answer` the joined clarification text. */
   message?: string;
+  /** Set true alongside an `answer` turn that resolves a clarification — the
+   * backend clarify gate uses it to advance past the question. */
+  clarification_question_answered?: boolean;
+  /** The user's pick per question, stored against the brief's clarification. */
+  clarification_answers?: ClarificationAnswer[];
 }
 
 // ---------------------------------------------------------------------------
@@ -196,7 +216,7 @@ export type ResearchJobStatus = "pending" | "running" | "completed" | "failed";
 
 export interface ResearchJob {
   id: string;
-  session_id: string;
+  brief_id: string;
   user_id: string;
   status: ResearchJobStatus;
   research_plan: string | null;

@@ -5,7 +5,7 @@ import { Link, NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "../../lib/auth";
 
 import { useApi } from "../../lib/api";
-import type { Session } from "../../lib/types";
+import type { Brief } from "../../lib/types";
 import { ThemeToggle } from "../ui/ThemeToggle";
 import { Wordmark } from "../ui/Wordmark";
 
@@ -163,9 +163,9 @@ function ResearchList() {
   const api = useApi();
   const [page, setPage] = useState(0); // zero-indexed
   const sessions = useQuery({
-    queryKey: ["sessions", { limit: PAGE_SIZE, offset: page * PAGE_SIZE }],
+    queryKey: ["briefs", { limit: PAGE_SIZE, offset: page * PAGE_SIZE }],
     queryFn: () =>
-      api.sessions.list({ limit: PAGE_SIZE, offset: page * PAGE_SIZE }),
+      api.briefs.list({ limit: PAGE_SIZE, offset: page * PAGE_SIZE }),
     placeholderData: (prev) => prev, // smooth page transitions
   });
 
@@ -300,7 +300,7 @@ function PaginationChevron({
   );
 }
 
-function ResearchRow({ session, ordinal }: { session: Session; ordinal: number }) {
+function ResearchRow({ session, ordinal }: { session: Brief; ordinal: number }) {
   const dot = statusDotClass(session.status);
   const pulsing = session.status === "running" ? "animate-pulse-dot" : "";
 
@@ -332,7 +332,7 @@ function ResearchRow({ session, ordinal }: { session: Session; ordinal: number }
   );
 }
 
-function statusDotClass(s: Session["status"]): string {
+function statusDotClass(s: Brief["status"]): string {
   switch (s) {
     case "running":
       return "bg-info";

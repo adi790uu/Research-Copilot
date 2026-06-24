@@ -56,6 +56,6 @@ class Report(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    session_id: str
+    brief_id: str
     content: ReportContent
     created_at: datetime

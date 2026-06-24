@@ -16,14 +16,15 @@ import {
 } from "../hooks/useWorkflowChat";
 import { useJob, useLatestJob } from "../hooks/useSessionStatus";
 import { useReportChat } from "../hooks/useReportChat";
+import { deriveResearchStatus } from "../lib/runStatus";
 
 export default function SessionDetail() {
   const { id = "" } = useParams<{ id: string }>();
   const api = useApi();
 
   const session = useQuery({
-    queryKey: ["session", id],
-    queryFn: () => api.sessions.get(id),
+    queryKey: ["brief", id],
+    queryFn: () => api.briefs.get(id),
     enabled: id.length > 0,
   });
 
@@ -37,11 +38,30 @@ export default function SessionDetail() {
   const [approving, setApproving] = useState(false);
   const [approveError, setApproveError] = useState<string | null>(null);
 
+  // Persisted phase-1 transcript — fetched once so a reload can restore the
+  // clarification card (and the user's prior answer) without a live stream.
+  const phase1Messages = useQuery({
+    queryKey: ["brief-messages", id],
+    queryFn: () => api.briefs.listMessages(id, "workflow"),
+    enabled: id.length > 0,
+  });
+
+  // Hydrate the chat from persisted messages + the brief's stored
+  // clarification before deciding whether to re-open SSE.
+  useEffect(() => {
+    if (!session.data || !phase1Messages.data) return;
+    chat.hydrate(phase1Messages.data, session.data.clarification_question);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session.data, phase1Messages.data]);
+
   // On cold-load of an in-flight phase-1 session, subscribe to SSE so any
-  // retained events replay. Skip for `running` (phase-2) sessions to avoid
-  // racing with the background task on the same checkpoint.
+  // retained events replay. Skipped once hydration has seeded turns (the
+  // clarification card is already restored, so re-streaming would duplicate
+  // it). Still runs for `awaiting_plan_approval`, where hydration seeds
+  // nothing and SSE replays the plan_ready card.
   useEffect(() => {
     if (!session.data) return;
+    if (phase1Messages.isLoading) return;
     if (chat.turns.length > 0 || chat.streaming) return;
     if (
       session.data.status === "awaiting_clarification" ||
@@ -50,7 +70,7 @@ export default function SessionDetail() {
       void chat.subscribe();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session.data?.status]);
+  }, [session.data?.status, phase1Messages.isLoading]);
 
   // SSE handed us a job_id with `plan_ready` — promote it so `useJob` polls.
   useEffect(() => {
@@ -69,19 +89,44 @@ export default function SessionDetail() {
   const jobQuery = useJob(jobId);
   const job = jobQuery.data ?? latestJobQuery.data ?? null;
 
-  // Per-researcher rows — polled while the job runs. Drives the Sources
-  // block's subquery groups and source counts.
+  // Progress artefacts — polled together while the job runs. `tasks` is the
+  // per-angle dispatch log (running/done/failed), `researchers` the completed
+  // results, `events` the worker's stage markers. All survive reloads.
+  const pollWhileRunning = () => {
+    const status = jobQuery.data?.status ?? latestJobQuery.data?.status;
+    if (status === "completed" || status === "failed") return false;
+    return 6000;
+  };
   const researchersQuery = useQuery({
     queryKey: ["job-researchers", jobId],
     queryFn: () => api.jobs.researchers(jobId!),
     enabled: !!jobId,
-    refetchInterval: () => {
-      const status = jobQuery.data?.status ?? latestJobQuery.data?.status;
-      if (status === "completed" || status === "failed") return false;
-      return 6000;
-    },
+    refetchInterval: pollWhileRunning,
+  });
+  const tasksQuery = useQuery({
+    queryKey: ["job-tasks", jobId],
+    queryFn: () => api.jobs.tasks(jobId!),
+    enabled: !!jobId,
+    refetchInterval: pollWhileRunning,
+  });
+  const eventsQuery = useQuery({
+    queryKey: ["job-events", jobId],
+    queryFn: () => api.jobs.events(jobId!),
+    enabled: !!jobId,
+    refetchInterval: pollWhileRunning,
   });
   const researchers = researchersQuery.data ?? [];
+
+  const researchStatus = useMemo(
+    () =>
+      deriveResearchStatus({
+        job,
+        tasks: tasksQuery.data ?? [],
+        researchers,
+        events: eventsQuery.data ?? [],
+      }),
+    [job, tasksQuery.data, researchers, eventsQuery.data]
+  );
 
   // Plan: prefer the live SSE-delivered plan; fall back to parsing
   // job.research_plan (the backend writes it at auto-spawn time). Makes
@@ -119,7 +164,15 @@ export default function SessionDetail() {
       const joined = lines
         .map((l) => `${l.question}\nClarification answer: ${l.answer}`)
         .join("\n\n");
-      void chat.send({ kind: "answer", message: joined }, optimistic);
+      void chat.send(
+        {
+          kind: "answer",
+          message: joined,
+          clarification_question_answered: true,
+          clarification_answers: lines,
+        },
+        optimistic
+      );
     },
     [chat]
   );
@@ -137,7 +190,7 @@ export default function SessionDetail() {
     setApproving(true);
     setApproveError(null);
     try {
-      const { job_id } = await api.sessions.approvePlan(id);
+      const { job_id } = await api.briefs.approvePlan(id);
       setJobId(job_id);
       chat.markApproved();
     } catch (e) {
@@ -190,15 +243,20 @@ export default function SessionDetail() {
 
   // Auto-start the run as soon as the page loads on a pending session.
   // No human "Start research" click — we just kick the SSE off. Ref-guarded
-  // so it fires exactly once per mount.
+  // so it fires exactly once per mount. The start turn carries the labeled
+  // intro as its message; the backend persists it and seeds the graph.
   const autoStartedRef = useRef(false);
   useEffect(() => {
     if (initialLoading) return;
     if (!canStart) return;
     if (autoStartedRef.current) return;
     autoStartedRef.current = true;
-    void chat.send({ kind: "start" });
-  }, [canStart, initialLoading, chat.send]);
+    const b = session.data!;
+    void chat.send({
+      kind: "start",
+      message: `Company Name: ${b.company_name}\nWebsite: ${b.website}\nObjective: ${b.objective}`,
+    });
+  }, [canStart, initialLoading, chat.send, session.data]);
 
   // Build the chat feed. Order:
   //   1. Intro user message — always synthesized from the session row so
@@ -217,15 +275,24 @@ export default function SessionDetail() {
     const live = chat.turns;
     const sessRow = session.data;
 
-    // Always synthesize the intro as the first turn — it's the user's
-    // own request (company + website + objective) and should anchor the
-    // top of the chat from the moment the page loads, whether the run is
-    // pending, mid-flight, or completed.
-    if (sessRow) {
+    // Intro: render the user's original request from the persisted first
+    // message (the messages table is the source of truth). Fall back to the
+    // brief row before that message exists (the live pending state).
+    const introMsg = phase1Messages.data?.find(
+      (m) => m.role === "user" && !m.content.includes("Clarification answer:")
+    );
+    if (introMsg) {
       out.push({
         role: "user",
         kind: "intro",
-        content: `Company: ${sessRow.company_name}\nWebsite: ${sessRow.website}\nObjective: ${sessRow.objective}`,
+        content: introMsg.content,
+        at: introMsg.created_at,
+      });
+    } else if (sessRow) {
+      out.push({
+        role: "user",
+        kind: "intro",
+        content: `Company Name: ${sessRow.company_name}\nWebsite: ${sessRow.website}\nObjective: ${sessRow.objective}`,
         at: sessRow.created_at,
       });
     }
@@ -299,7 +366,7 @@ export default function SessionDetail() {
     }
 
     return out;
-  }, [chat.turns, plan, job, session.data]);
+  }, [chat.turns, plan, job, session.data, phase1Messages.data]);
 
   if (!id) return null;
 
@@ -332,8 +399,7 @@ export default function SessionDetail() {
         followupError={reportChat.error}
         onFollowupSend={handleFollowupSend}
         initialLoading={initialLoading}
-        job={job}
-        researchers={researchers}
+        status={researchStatus}
       />
 
       <ArtifactPanel
@@ -343,8 +409,7 @@ export default function SessionDetail() {
         focus={focus}
         onFocusHandled={() => setFocus(null)}
         job={job}
-        researchers={researchers}
-        phase={phase}
+        status={researchStatus}
         title={session.data?.company_name ?? "Workspace"}
       />
     </div>

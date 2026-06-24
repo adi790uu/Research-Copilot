@@ -1,24 +1,21 @@
 import { useEffect, useRef, useState } from "react";
 
 import { useApi } from "../../lib/api";
-import type {
-  ResearchJob,
-  ResearcherResult,
-  Source,
-} from "../../lib/types";
-import type { RunPhase } from "../../hooks/useWorkflowChat";
+import type { ResearchAngle, ResearchStatus } from "../../lib/runStatus";
+import type { ResearchJob, Source } from "../../lib/types";
 import { ReportView } from "./ReportView";
 
 /**
  * Vertical timeline workspace. No tabs — every artifact stacks in run order:
  *
- *   ● Gathered N sources              → expand → top-domains + per-subquery list
- *   ● Researched: <subquery>          → expand → that researcher's sources + summary
- *   ● Research report is ready        → expand → ReportView + PDF
+ *   ● Researching N angles    → expand → each angle's status, summary + sources
+ *   ● Gathered N sources      → expand → top-domains breakdown
+ *   ● Writing the report…     → live pulse
+ *   ● Research report is ready → expand → ReportView + PDF
  *
- * The plan is shown inline in the chat; the workspace holds only the sources
- * and the final report. `focus` scrolls to the report block when the chat
- * report card is clicked.
+ * The plan is shown inline in the chat; the workspace holds the live research
+ * progress and the final report. `focus` scrolls to the report block when the
+ * chat report card is clicked.
  */
 
 export type ArtifactFocus = "report" | null;
@@ -31,8 +28,7 @@ interface Props {
   onFocusHandled: () => void;
 
   job: ResearchJob | null;
-  researchers: ResearcherResult[];
-  phase: RunPhase;
+  status: ResearchStatus;
   /** Title to show in the header — usually the session's company name. */
   title: string;
 }
@@ -44,18 +40,13 @@ export function ArtifactPanel({
   focus,
   onFocusHandled,
   job,
-  researchers,
-  phase,
+  status,
   title,
 }: Props) {
   if (!open) return null;
 
-  const sourcesAll: Source[] = researchers.length
-    ? researchers.flatMap((r) => r.sources ?? [])
-    : job?.sources ?? [];
-  const totalSources = sourcesAll.length;
-  const reportReady = !!job?.final_report;
-  const jobFailed = job?.status === "failed";
+  const { stage, angles, sources } = status;
+  const researching = stage === "researching";
 
   return (
     <aside
@@ -63,10 +54,7 @@ export function ArtifactPanel({
       style={{ gridTemplateRows: "auto minmax(0, 1fr)" }}
     >
       <header className="flex items-center justify-between border-b border-rule/15 px-6 py-4">
-        <h2
-          className="truncate font-serif text-base text-ink"
-          title={title}
-        >
+        <h2 className="truncate font-serif text-base text-ink" title={title}>
           {title}
         </h2>
         <button
@@ -81,30 +69,47 @@ export function ArtifactPanel({
 
       <div className="overflow-y-auto px-6 py-6">
         <ol className="space-y-4">
-          {(totalSources > 0 || researchers.length > 0) && (
+          {angles.length > 0 && (
+            <TimelineStep
+              id="angles"
+              tone={researching ? "active" : "done"}
+              label={`${researching ? "Researching" : "Researched"} ${
+                angles.length
+              } ${angles.length === 1 ? "angle" : "angles"}`}
+              focus={null}
+              onFocusHandled={onFocusHandled}
+              defaultOpen={researching}
+            >
+              <AnglesBlock angles={angles} />
+            </TimelineStep>
+          )}
+
+          {sources.length > 0 && (
             <TimelineStep
               id="sources"
-              icon="●"
-              tone={reportReady || jobFailed ? "done" : "active"}
-              label={
-                totalSources > 0
-                  ? `Gathered ${totalSources} ${
-                      totalSources === 1 ? "source" : "sources"
-                    }`
-                  : "Gathering sources…"
-              }
+              tone="done"
+              label={`Gathered ${sources.length} ${
+                sources.length === 1 ? "source" : "sources"
+              }`}
               focus={null}
               onFocusHandled={onFocusHandled}
               defaultOpen={false}
             >
-              <SourcesBlock sources={sourcesAll} researchers={researchers} />
+              <SourcesBlock sources={sources} showList={angles.length === 0} />
             </TimelineStep>
           )}
 
-          {jobFailed && (
+          {stage === "researching" && angles.length === 0 && (
+            <LivePulse label="Scoping the research angles…" />
+          )}
+
+          {stage === "writing_report" && (
+            <LivePulse label="Writing the report…" />
+          )}
+
+          {stage === "failed" && (
             <TimelineStep
               id="failed"
-              icon="●"
               tone="bad"
               label="Research failed"
               focus={null}
@@ -112,16 +117,14 @@ export function ArtifactPanel({
               defaultOpen={true}
             >
               <p className="text-sm text-ink-soft">
-                The background job ended with status <code>failed</code>.
-                Check the backend logs for the cause.
+                The research run ended early. Start a new brief to try again.
               </p>
             </TimelineStep>
           )}
 
-          {reportReady && job && (
+          {stage === "done" && job && (
             <TimelineStep
               id="report"
-              icon="●"
               tone="done"
               label="Research report is ready"
               focus={focus}
@@ -131,27 +134,18 @@ export function ArtifactPanel({
               <ReportBlock job={job} sessionId={sessionId} />
             </TimelineStep>
           )}
-
-          {/* Live pulse when the run is in flight and no terminal step is
-              showing yet. Helps the user see something is happening even
-              before sources start landing. */}
-          {!reportReady &&
-            !jobFailed &&
-            (phase === "running" || phase === "awaiting_clarification") && (
-              <li className="flex items-center gap-3 px-1 py-2">
-                <span className="h-2 w-2 animate-pulse-dot rounded-full bg-info" />
-                <span className="text-sm text-ink-soft">
-                  {researchers.length > 0
-                    ? "Researchers running…"
-                    : phase === "awaiting_clarification"
-                    ? "Waiting on your answers…"
-                    : "Working…"}
-                </span>
-              </li>
-            )}
         </ol>
       </div>
     </aside>
+  );
+}
+
+function LivePulse({ label }: { label: string }) {
+  return (
+    <li className="flex items-center gap-3 px-1 py-2">
+      <span className="h-2 w-2 animate-pulse-dot rounded-full bg-info" />
+      <span className="text-sm text-ink-soft">{label}</span>
+    </li>
   );
 }
 
@@ -159,7 +153,6 @@ export function ArtifactPanel({
 
 function TimelineStep({
   id,
-  icon,
   tone,
   label,
   focus,
@@ -168,7 +161,6 @@ function TimelineStep({
   children,
 }: {
   id: string;
-  icon: string;
   tone: "active" | "done" | "bad";
   label: string;
   focus: ArtifactFocus;
@@ -188,13 +180,6 @@ function TimelineStep({
     }
   }, [focus, id, onFocusHandled]);
 
-  const dotColor =
-    tone === "active"
-      ? "text-info"
-      : tone === "bad"
-      ? "text-bad"
-      : "text-ink-faint";
-
   return (
     <li ref={rootRef} className="scroll-mt-4">
       <button
@@ -202,7 +187,7 @@ function TimelineStep({
         onClick={() => setOpen((v) => !v)}
         className="flex w-full items-center gap-3 rounded-sm px-1 py-1.5 text-left transition-colors hover:bg-rule/5"
       >
-        <span className={`text-base leading-none ${dotColor}`}>{icon}</span>
+        <StepDot tone={tone} />
         <span className="flex-1 text-sm text-ink">{label}</span>
         <span
           className={`font-mono text-[0.6875rem] text-ink-faint transition-transform ${
@@ -218,47 +203,142 @@ function TimelineStep({
   );
 }
 
-// ─── Sources block (top-domains + collapsible subquery groups) ─────────────
+function StepDot({ tone }: { tone: "active" | "done" | "bad" }) {
+  const color =
+    tone === "active" ? "bg-info" : tone === "bad" ? "bg-bad" : "bg-ink-faint";
+  return (
+    <span
+      className={`h-2 w-2 shrink-0 rounded-full ${color} ${
+        tone === "active" ? "animate-pulse-dot" : ""
+      }`}
+      aria-hidden="true"
+    />
+  );
+}
+
+// ─── Research angles (the per-investigation breakdown) ─────────────────────
+
+function AnglesBlock({ angles }: { angles: ResearchAngle[] }) {
+  return (
+    <div className="space-y-3">
+      <p className="text-xs leading-relaxed text-ink-faint">
+        Each angle is a focused investigation the agents ran in parallel.
+      </p>
+      <div className="space-y-2">
+        {angles.map((angle, i) => (
+          <AngleRow
+            key={`${angle.topic}-${i}`}
+            angle={angle}
+            defaultOpen={angles.length === 1}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AngleRow({
+  angle,
+  defaultOpen,
+}: {
+  angle: ResearchAngle;
+  defaultOpen: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  const meta =
+    angle.state === "running"
+      ? "researching…"
+      : angle.state === "failed"
+      ? "no results"
+      : `${angle.sources.length} ${
+          angle.sources.length === 1 ? "source" : "sources"
+        }`;
+
+  return (
+    <section className="overflow-hidden rounded-sm border border-rule/15 bg-bg-elev/30">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-rule/5"
+      >
+        <span className="flex min-w-0 items-center gap-3">
+          <AngleStatusIcon state={angle.state} />
+          <span className="truncate text-sm text-ink" title={angle.topic}>
+            {angle.topic}
+          </span>
+        </span>
+        <span className="flex shrink-0 items-center gap-2">
+          <span className="font-mono text-[0.6875rem] uppercase tracking-eyebrow text-ink-faint">
+            {meta}
+          </span>
+          <Chevron open={open} />
+        </span>
+      </button>
+      {open && (
+        <div className="border-t border-rule/10 px-2 py-1.5">
+          {angle.summary ? (
+            <p className="px-2 pb-2 pt-1 text-xs leading-relaxed text-ink-faint">
+              {angle.summary.length > 280
+                ? `${angle.summary.slice(0, 277)}…`
+                : angle.summary}
+            </p>
+          ) : null}
+          {angle.sources.length === 0 ? (
+            <p className="px-2 py-3 text-sm italic text-ink-faint">
+              {angle.state === "running"
+                ? "Gathering sources for this angle…"
+                : "No sources captured for this angle."}
+            </p>
+          ) : (
+            <ol>
+              {angle.sources.map((s, i) => (
+                <li key={s.id ?? s.url ?? i}>
+                  <SourceRow source={s} />
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function AngleStatusIcon({ state }: { state: ResearchAngle["state"] }) {
+  if (state === "running") {
+    return (
+      <span
+        className="block h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-[1.5px] border-info border-r-transparent"
+        aria-hidden="true"
+      />
+    );
+  }
+  if (state === "failed") {
+    return <span className="h-2 w-2 shrink-0 rounded-full bg-bad" aria-hidden="true" />;
+  }
+  return <CheckIcon />;
+}
+
+// ─── Sources block (aggregate top-domains view) ────────────────────────────
 
 function SourcesBlock({
   sources,
-  researchers,
+  showList,
 }: {
   sources: Source[];
-  researchers: ResearcherResult[];
+  showList: boolean;
 }) {
-  if (sources.length === 0 && researchers.length === 0) {
-    return (
-      <p className="text-sm italic text-ink-faint">
-        Sources will appear here as researchers complete.
-      </p>
-    );
-  }
-
-  const hasSubqueries = researchers.length > 0;
-
   return (
     <div className="space-y-5">
       <DomainSummary sources={sources} totalCount={sources.length} />
-      {hasSubqueries ? (
-        <div className="space-y-2">
-          {researchers.map((r, i) => (
-            <SubqueryGroup
-              key={`${r.created_at}-${i}`}
-              topic={r.topic}
-              summary={r.summary}
-              sources={r.sources ?? []}
-              defaultOpen={i === 0 && researchers.length === 1}
-            />
+      {showList && (
+        <ol className="overflow-hidden rounded-sm border border-rule/15 bg-bg-elev/30">
+          {sources.map((s, i) => (
+            <li key={s.id ?? s.url ?? i}>
+              <SourceRow source={s} />
+            </li>
           ))}
-        </div>
-      ) : (
-        <SubqueryGroup
-          topic="All sources"
-          summary={null}
-          sources={sources}
-          defaultOpen
-        />
+        </ol>
       )}
     </div>
   );
@@ -322,65 +402,6 @@ function DomainSummary({
         <p className="mt-3 font-mono text-[0.6875rem] uppercase tracking-eyebrow text-ink-faint">
           + {otherCount} other {otherCount === 1 ? "source" : "sources"}
         </p>
-      )}
-    </section>
-  );
-}
-
-function SubqueryGroup({
-  topic,
-  summary,
-  sources,
-  defaultOpen,
-}: {
-  topic: string;
-  summary: string | null;
-  sources: Source[];
-  defaultOpen: boolean;
-}) {
-  const [open, setOpen] = useState(defaultOpen);
-
-  return (
-    <section className="overflow-hidden rounded-sm border border-rule/15 bg-bg-elev/30">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-rule/5"
-      >
-        <span className="flex min-w-0 items-center gap-3">
-          <GlobeIcon />
-          <span className="truncate text-sm text-ink" title={topic}>
-            {topic}
-          </span>
-        </span>
-        <span className="flex shrink-0 items-center gap-2">
-          <span className="font-mono text-[0.6875rem] uppercase tracking-eyebrow text-ink-faint">
-            {sources.length} {sources.length === 1 ? "result" : "results"}
-          </span>
-          <Chevron open={open} />
-        </span>
-      </button>
-      {open && (
-        <div className="border-t border-rule/10 px-2 py-1.5">
-          {summary ? (
-            <p className="px-2 pb-2 pt-1 text-xs leading-relaxed text-ink-faint">
-              {summary.length > 280 ? `${summary.slice(0, 277)}…` : summary}
-            </p>
-          ) : null}
-          {sources.length === 0 ? (
-            <p className="px-2 py-3 text-sm italic text-ink-faint">
-              No sources captured for this subquery.
-            </p>
-          ) : (
-            <ol>
-              {sources.map((s, i) => (
-                <li key={s.id ?? s.url ?? i}>
-                  <SourceRow source={s} />
-                </li>
-              ))}
-            </ol>
-          )}
-        </div>
       )}
     </section>
   );
@@ -514,6 +535,25 @@ function GlobeIcon() {
       <path d="M3 12h18" />
       <path d="M12 3a13 13 0 0 1 0 18" />
       <path d="M12 3a13 13 0 0 0 0 18" />
+    </svg>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={14}
+      height={14}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2.4}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="h-3.5 w-3.5 shrink-0 text-accent"
+      aria-hidden="true"
+    >
+      <path d="M20 6 9 17l-5-5" />
     </svg>
   );
 }

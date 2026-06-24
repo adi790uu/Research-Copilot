@@ -25,13 +25,13 @@ from app.persistence.models import (
 # ---- jobs ------------------------------------------------------------------
 
 
-async def create_job(session_id: str, user_id: str, research_plan: str) -> str:
+async def create_job(brief_id: str, user_id: str, research_plan: str) -> str:
     job_id = str(uuid.uuid4())
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as db:
         row = ResearchJobORM(
             id=job_id,
-            session_id=session_id,
+            brief_id=brief_id,
             user_id=user_id,
             status="pending",
             research_plan=research_plan,
@@ -60,12 +60,12 @@ async def get_job(job_id: str) -> dict | None:
         return _serialize_job(row)
 
 
-async def get_job_by_session(session_id: str) -> dict | None:
+async def get_job_by_brief(brief_id: str) -> dict | None:
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as db:
         result = await db.execute(
             select(ResearchJobORM)
-            .where(ResearchJobORM.session_id == session_id)
+            .where(ResearchJobORM.brief_id == brief_id)
             .order_by(ResearchJobORM.created_at.desc())
             .limit(1)
         )
@@ -84,7 +84,7 @@ def _serialize_job(row: ResearchJobORM) -> dict:
             sources = []
     return {
         "id": row.id,
-        "session_id": row.session_id,
+        "brief_id": row.brief_id,
         "user_id": row.user_id,
         "status": row.status,
         "research_plan": row.research_plan,

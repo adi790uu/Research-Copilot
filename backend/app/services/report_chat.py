@@ -23,8 +23,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AppError, NotFoundError
 from app.persistence.repositories import (
-    SessionMessageRepository,
-    SessionRepository,
+    BriefRepository,
+    MessageRepository,
 )
 from app.services import job_store
 from app.workflow.helpers import _create_model, _get_today_str
@@ -128,14 +128,14 @@ def _to_history_messages(rows: list[dict]) -> list[Any]:
 
 
 async def list_messages(
-    db: AsyncSession, *, session_id: str, user_id: str
+    db: AsyncSession, *, brief_id: str, user_id: str, kind: str | None = None
 ) -> list[dict]:
-    """Return the persisted history for a session. 404s if the user
-    doesn't own the session."""
-    sess = await SessionRepository(db, user_id).get(session_id)
-    if sess is None:
-        raise NotFoundError(f"Session {session_id} not found")
-    rows = await SessionMessageRepository(db, session_id).list()
+    """Return the persisted history for a brief, optionally scoped to one chat
+    surface (`workflow` or `followup`). 404s if the user doesn't own the brief."""
+    brief = await BriefRepository(db, user_id).get(brief_id)
+    if brief is None:
+        raise NotFoundError(f"Brief {brief_id} not found")
+    rows = await MessageRepository(db, brief_id).list(kind=kind)
     return [
         {
             "id": r.id,
@@ -150,7 +150,7 @@ async def list_messages(
 async def stream_followup(
     db: AsyncSession,
     *,
-    session_id: str,
+    brief_id: str,
     user_id: str,
     question: str,
 ) -> AsyncIterator[str]:
@@ -158,18 +158,18 @@ async def stream_followup(
     then persist the assistant turn. Yields raw text chunks; the route
     wraps each in an SSE frame.
     """
-    sess = await SessionRepository(db, user_id).get(session_id)
-    if sess is None:
-        raise NotFoundError(f"Session {session_id} not found")
+    brief = await BriefRepository(db, user_id).get(brief_id)
+    if brief is None:
+        raise NotFoundError(f"Brief {brief_id} not found")
 
-    job = await job_store.get_job_by_session(session_id)
+    job = await job_store.get_job_by_brief(brief_id)
     if not job or not job.get("final_report"):
         raise ReportNotReadyError(
             "Follow-up chat is only available after research completes."
         )
 
-    msg_repo = SessionMessageRepository(db, session_id)
-    history_rows = await msg_repo.list()
+    msg_repo = MessageRepository(db, brief_id)
+    history_rows = await msg_repo.list(kind="followup")
     history = [
         {
             "role": r.role,
@@ -180,12 +180,12 @@ async def stream_followup(
 
     # Persist the user turn before we hit the LLM so we don't lose it if
     # the stream breaks midway.
-    await msg_repo.add(role="user", content=question.strip())
+    await msg_repo.add(role="user", content=question.strip(), kind="followup")
     await db.commit()
 
     system = _build_system_prompt(
-        company_name=sess.company_name,
-        website=sess.website,
+        company_name=brief.company_name,
+        website=brief.website,
         report_md=_format_report(str(job.get("final_report") or "")),
         sources_block=_format_sources(job.get("sources") or []),
     )
@@ -204,7 +204,7 @@ async def stream_followup(
             assistant_buffer.append(piece)
             yield piece
     except Exception as exc:  # noqa: BLE001
-        logger.exception("followup stream failed for session %s", session_id)
+        logger.exception("followup stream failed for brief %s", brief_id)
         # Persist whatever we got + an error tail so the conversation
         # stays in a consistent state.
         assistant_buffer.append(f"\n\n[stream failed: {exc}]")
@@ -212,7 +212,7 @@ async def stream_followup(
 
     final = "".join(assistant_buffer).strip()
     if final:
-        await msg_repo.add(role="assistant", content=final)
+        await msg_repo.add(role="assistant", content=final, kind="followup")
         await db.commit()
 
 

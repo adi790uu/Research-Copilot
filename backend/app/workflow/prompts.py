@@ -16,11 +16,7 @@ Your job: decide whether one or two short, well-targeted questions would meaning
 
 ## Context
 
-Target company: {company_name}
-Company website: {website}
-Objective: {objective}
-
-Conversation so far:
+The user's request — the target company (name + website) and objective — and any prior turns are in the conversation below:
 <messages>
 {messages}
 </messages>
@@ -59,11 +55,7 @@ research_brief_prompt = """You are a research strategist preparing a brief for a
 
 ## Inputs
 
-Target company: {company_name}
-Company website: {website}
-Objective: {objective}
-
-Conversation so far:
+The user's request — the target company (name + website) and objective — and any clarification answers are in the conversation below:
 <messages>
 {messages}
 </messages>
@@ -95,8 +87,10 @@ research_plan_prompt = """You are a research strategist. Given the brief below, 
 
 ## Inputs
 
-Target company: {company_name}
-Company website: {website}
+The user's request (target company name + website, objective) and any clarification answers:
+<messages>
+{messages}
+</messages>
 
 <brief>
 {research_brief}

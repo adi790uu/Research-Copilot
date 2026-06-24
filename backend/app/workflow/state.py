@@ -80,13 +80,9 @@ class AgentState(MessagesState):
     serializer warns on unregistered types, and a dict round-trips through
     the checkpointer cleanly. The plan node fills this with
     `plan.model_dump(mode="json")`; consumers can `ResearchPlan.model_validate`
-    if they need typed access.
+    if they need typed access. Company/website/objective are not stored as
+    fields — phase 1 is message-driven, so the nodes read them from `messages`.
     """
-
-    session_id: str
-    company_name: str
-    website: str
-    objective: str
 
     research_brief: str | None
     research_plan: dict | None

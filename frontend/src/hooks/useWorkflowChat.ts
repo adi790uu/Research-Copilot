@@ -4,6 +4,8 @@ import { useApi } from "../lib/api";
 import type {
   ChatTurnPayload,
   ClarificationQuestion,
+  ClarificationState,
+  FollowupMessage,
   ResearchPlan,
   WorkflowEvent,
   WorkflowNode,
@@ -89,7 +91,7 @@ export const NODES: WorkflowNode[] = [
 // ─── Hook ───────────────────────────────────────────────────────────────────
 
 /**
- * Drives the phase-1 SSE chat against `POST /sessions/{id}/chat`.
+ * Drives the phase-1 SSE chat against `POST /briefs/{id}/chat`.
  *
  * Each `send()` POSTs the user turn and reads the SSE response body to
  * completion. Events become assistant turns in `turns`. The stream closes
@@ -101,6 +103,14 @@ export const NODES: WorkflowNode[] = [
 export function useWorkflowChat(sessionId: string): WorkflowChatState & {
   send: (payload: ChatTurnPayload, optimistic?: UserTurn) => Promise<void>;
   subscribe: () => Promise<void>;
+  /** Seed phase-1 chat state from persisted messages + the brief's stored
+   * clarification, so a reload restores the clarification card (and any
+   * answer the user already gave) without a live SSE stream. No-op once a
+   * live stream has produced turns. */
+  hydrate: (
+    messages: FollowupMessage[],
+    clarification: ClarificationState | null | undefined
+  ) => void;
   /** Called once `POST /plan/approve` succeeds: flips into the running
    * phase and marks the plan card as acted so it stops offering approval. */
   markApproved: () => void;
@@ -149,7 +159,7 @@ export function useWorkflowChat(sessionId: string): WorkflowChatState & {
       });
 
       try {
-        const res = await api.sessions.chat(sessionId, payload, ctrl.signal);
+        const res = await api.briefs.chat(sessionId, payload, ctrl.signal);
         if (!res.ok) {
           let detail = `HTTP ${res.status}`;
           try {
@@ -191,6 +201,23 @@ export function useWorkflowChat(sessionId: string): WorkflowChatState & {
 
   const subscribe = useCallback(() => stream({ kind: "subscribe" }), [stream]);
 
+  const hydrate = useCallback(
+    (
+      messages: FollowupMessage[],
+      clarification: ClarificationState | null | undefined
+    ) => {
+      setState((s) => {
+        // A live stream (or a prior hydrate) already owns the feed — don't
+        // clobber it.
+        if (s.streaming || s.turns.length > 0) return s;
+        const seeded = buildHydratedTurns(messages, clarification);
+        if (seeded.turns.length === 0) return s;
+        return { ...s, turns: seeded.turns, phase: seeded.phase };
+      });
+    },
+    []
+  );
+
   const markApproved = useCallback(() => {
     setState((s) => ({
       ...s,
@@ -213,8 +240,8 @@ export function useWorkflowChat(sessionId: string): WorkflowChatState & {
   // re-evaluate on every render. Identity only changes when state or one
   // of the callbacks actually changes.
   return useMemo(
-    () => ({ ...state, send: stream, subscribe, markApproved, reset }),
-    [state, stream, subscribe, markApproved, reset]
+    () => ({ ...state, send: stream, subscribe, hydrate, markApproved, reset }),
+    [state, stream, subscribe, hydrate, markApproved, reset]
   );
 }
 
@@ -291,6 +318,61 @@ function reduce(s: WorkflowChatState, ev: WorkflowEvent): WorkflowChatState {
     default:
       return s;
   }
+}
+
+// ─── Reload hydration ───────────────────────────────────────────────────────
+
+/** Reconstruct the phase-1 feed from the brief's stored clarification (the
+ * authoritative source) plus the persisted user answer message. The
+ * clarification question is NOT stored as a chat message — it lives on the
+ * brief — so the card is rendered from there. The intro user message is left
+ * to the caller (SessionDetail synthesizes it from the brief row). */
+function buildHydratedTurns(
+  messages: FollowupMessage[],
+  clarification: ClarificationState | null | undefined
+): { turns: ChatTurn[]; phase: RunPhase } {
+  const questions = clarification?.questions ?? null;
+  if (!questions || questions.length === 0) return { turns: [], phase: "idle" };
+
+  const answered = clarification?.answered ?? false;
+  const answerMsg = messages.find(
+    (m) => m.role === "user" && m.content.includes("Clarification answer:")
+  );
+  const at = answerMsg?.created_at ?? new Date().toISOString();
+
+  const turns: ChatTurn[] = [
+    { role: "assistant", kind: "clarification", questions, answered, at },
+  ];
+
+  if (answered) {
+    // Render the answer turn from the persisted answer message (source of
+    // truth); fall back to the brief's stored per-question answers.
+    const storedAnswers = questions
+      .filter((q) => q.answer != null)
+      .map((q) => ({ question: q.question, answer: q.answer ?? "" }));
+    turns.push({
+      role: "user",
+      kind: "answers",
+      lines: answerMsg ? parseAnswerLines(answerMsg.content) : storedAnswers,
+      at,
+    });
+  }
+
+  return { turns, phase: answered ? "idle" : "awaiting_clarification" };
+}
+
+/** Reverse the `"${question}\nClarification answer: ${answer}"` join the UI
+ * produces, back into question/answer pairs for the answers card. */
+function parseAnswerLines(
+  content: string
+): { question: string; answer: string }[] {
+  return content
+    .split("\n\n")
+    .map((block) => {
+      const [question = "", rest = ""] = block.split("\nClarification answer:");
+      return { question: question.trim(), answer: rest.trim() };
+    })
+    .filter((l) => l.question || l.answer);
 }
 
 function markClarificationAnswered(turns: ChatTurn[]): ChatTurn[] {

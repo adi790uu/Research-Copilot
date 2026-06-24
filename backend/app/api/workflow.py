@@ -2,12 +2,12 @@
 
 Two surfaces:
 
-* **Phase 1 chat** (`POST /sessions/{id}/chat`) — drives clarify → brief →
-  plan inline, streaming events as SSE until the graph pauses for
-  clarification or plan approval.
-* **Phase 2 jobs** — `POST /sessions/{id}/plan/approve` kicks off a
-  background `ResearchJob`; the frontend polls `GET /jobs/{id}` until the
-  job is `completed` or `failed`.
+* **Phase 1 chat** (`POST /briefs/{id}/chat`) — drives clarify → brief → plan
+  inline, streaming events as SSE until the graph pauses for clarification or
+  plan approval.
+* **Phase 2 jobs** — `POST /briefs/{id}/plan/approve` kicks off a background
+  `ResearchJob`; the frontend polls `GET /jobs/{id}` until the job is
+  `completed` or `failed`.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,10 +30,12 @@ from app.core.logging import get_logger
 from app.domain.events import WorkflowEvent
 from app.domain.report import Report, ReportContent
 from app.persistence.db import get_db_session
-from app.persistence.repositories import SessionRepository
+from app.persistence.repositories import BriefRepository
 from app.services import job_store, report_chat
 from app.services.pdf_export import PDFRenderError, report_to_pdf
 from app.services.workflow_service import WorkflowService
+
+
 class PDFUnavailableError(AppError):
     status_code = 503
     code = "pdf_renderer_unavailable"
@@ -48,24 +50,35 @@ def _service(request: Request) -> WorkflowService:
 
 # ─── Phase 1: chat SSE ──────────────────────────────────────────────────────
 
-router = APIRouter(prefix="/sessions/{session_id}", tags=["workflow"])
+router = APIRouter(prefix="/briefs/{brief_id}", tags=["workflow"])
 
 
 ChatTurnKind = Literal["start", "answer", "subscribe"]
+
+
+class ClarificationAnswer(BaseModel):
+    question: str
+    answer: str
 
 
 class ChatTurn(BaseModel):
     """One user turn in the phase-1 chat flow."""
 
     kind: ChatTurnKind
-    # For "answer": the message text to inject (typically the clarification
-    # answer the user picked).
+    # The turn text appended to the graph history: the labeled
+    # Company/Website/Objective block on `start`, or the clarification answer on
+    # `answer`. None for `subscribe`.
     message: str | None = None
+    # Set when this turn answers the clarification questions — flips the brief's
+    # clarification gate to answered so the user isn't re-prompted.
+    clarification_question_answered: bool = False
+    # The user's pick per question, stored against the brief's clarification.
+    clarification_answers: list[ClarificationAnswer] | None = None
 
 
 @router.post("/chat")
 async def chat(
-    session_id: str,
+    brief_id: str,
     payload: ChatTurn,
     request: Request,
     user: CurrentUser = Depends(get_current_user),
@@ -74,25 +87,33 @@ async def chat(
     """SSE stream for the phase-1 portion of the workflow.
 
     The body's `kind` advances the graph:
-      - `start`: seed the run (no message).
+      - `start`: seed the run with the labeled intro `message`.
       - `answer`: append `message` as a new HumanMessage and re-drive.
       - `subscribe`: tail the current run without injecting a turn.
 
     The stream closes when the graph pauses (clarification_requested /
-    plan_ready) or fails. The frontend then either submits answers (POST
-    /chat with `answer`) or approves the plan (POST /plan/approve).
+    plan_ready) or fails.
     """
-    owned = await SessionRepository(db, user.id).get(session_id)
+    owned = await BriefRepository(db, user.id).get(brief_id)
     if owned is None:
-        raise NotFoundError(f"Session {session_id} not found")
+        raise NotFoundError(f"Brief {brief_id} not found")
 
-    svc = _service(request)
-    message = payload.message if payload.kind == "answer" else None
     if payload.kind == "answer" and not (payload.message and payload.message.strip()):
         raise AppError("'answer' requires a non-empty message")
 
+    svc = _service(request)
+    message = None if payload.kind == "subscribe" else payload.message
+    answers = (
+        [a.model_dump() for a in payload.clarification_answers]
+        if payload.clarification_answers
+        else None
+    )
     event_iter = await svc.run_phase1(
-        session_id=session_id, user_id=user.id, message=message
+        brief_id=brief_id,
+        user_id=user.id,
+        message=message,
+        clarification_answered=payload.clarification_question_answered,
+        clarification_answers=answers,
     )
 
     async def generator() -> AsyncIterator[bytes]:
@@ -129,7 +150,7 @@ class PlanApproval(BaseModel):
 
 @router.post("/plan/approve")
 async def approve_plan(
-    session_id: str,
+    brief_id: str,
     payload: PlanApproval,
     request: Request,
     user: CurrentUser = Depends(get_current_user),
@@ -139,50 +160,50 @@ async def approve_plan(
 
     Returns `{"job_id": ...}`; the frontend then polls `GET /jobs/{id}`.
     """
-    owned = await SessionRepository(db, user.id).get(session_id)
+    owned = await BriefRepository(db, user.id).get(brief_id)
     if owned is None:
-        raise NotFoundError(f"Session {session_id} not found")
+        raise NotFoundError(f"Brief {brief_id} not found")
 
     svc = _service(request)
     if payload.plan is not None:
-        await svc.save_plan_edits(session_id=session_id, user_id=user.id, plan=payload.plan)
-    job_id = await svc.approve_plan(session_id=session_id, user_id=user.id)
+        await svc.save_plan_edits(brief_id=brief_id, user_id=user.id, plan=payload.plan)
+    job_id = await svc.approve_plan(brief_id=brief_id, user_id=user.id)
     return {"job_id": job_id}
 
 
-# ─── Session-scoped reads ───────────────────────────────────────────────────
+# ─── Brief-scoped reads ─────────────────────────────────────────────────────
 
 
 @router.get("/jobs")
-async def list_session_jobs(
-    session_id: str,
+async def list_brief_jobs(
+    brief_id: str,
     db: AsyncSession = Depends(get_db_session),
     user: CurrentUser = Depends(get_current_user),
 ) -> list[dict]:
-    owned = await SessionRepository(db, user.id).get(session_id)
+    owned = await BriefRepository(db, user.id).get(brief_id)
     if owned is None:
-        raise NotFoundError(f"Session {session_id} not found")
-    job = await job_store.get_job_by_session(session_id)
+        raise NotFoundError(f"Brief {brief_id} not found")
+    job = await job_store.get_job_by_brief(brief_id)
     return [job] if job else []
 
 
 @router.get("/job")
 async def get_latest_job(
-    session_id: str,
+    brief_id: str,
     db: AsyncSession = Depends(get_db_session),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
-    """Convenience: the most recent job for this session, or 404 if none."""
-    owned = await SessionRepository(db, user.id).get(session_id)
+    """Convenience: the most recent job for this brief, or 404 if none."""
+    owned = await BriefRepository(db, user.id).get(brief_id)
     if owned is None:
-        raise NotFoundError(f"Session {session_id} not found")
-    job = await job_store.get_job_by_session(session_id)
+        raise NotFoundError(f"Brief {brief_id} not found")
+    job = await job_store.get_job_by_brief(brief_id)
     if job is None:
-        raise NotFoundError(f"No job for session {session_id}")
+        raise NotFoundError(f"No job for brief {brief_id}")
     return job
 
 
-# ─── Follow-up chat over a finished report ─────────────────────────────────
+# ─── Chat history + follow-up over a finished report ───────────────────────
 
 
 class FollowupMessage(BaseModel):
@@ -192,19 +213,20 @@ class FollowupMessage(BaseModel):
 
 
 @router.get("/messages")
-async def list_session_messages(
-    session_id: str,
+async def list_brief_messages(
+    brief_id: str,
+    kind: Literal["workflow", "followup"] | None = Query(default=None),
     db: AsyncSession = Depends(get_db_session),
     user: CurrentUser = Depends(get_current_user),
 ) -> list[dict]:
     return await report_chat.list_messages(
-        db, session_id=session_id, user_id=user.id
+        db, brief_id=brief_id, user_id=user.id, kind=kind
     )
 
 
 @router.post("/messages")
-async def post_session_message(
-    session_id: str,
+async def post_brief_message(
+    brief_id: str,
     payload: FollowupMessage,
     request: Request,
     db: AsyncSession = Depends(get_db_session),
@@ -220,7 +242,7 @@ async def post_session_message(
         try:
             async for chunk in report_chat.stream_followup(
                 db,
-                session_id=session_id,
+                brief_id=brief_id,
                 user_id=user.id,
                 question=payload.content,
             ):
@@ -311,9 +333,9 @@ async def get_job_report_pdf(
     if not raw_report:
         raise NotFoundError(f"Job {job_id} has no final report yet")
 
-    # research_jobs.final_report is the JSON-encoded ReportContent that
-    # background.py wrote. Parse it back into a typed Report so pdf_export
-    # can render the structured 8-section template.
+    # research_jobs.final_report is the JSON-encoded ReportContent that the
+    # worker wrote. Parse it back into a typed Report so pdf_export can render
+    # the structured 8-section template.
     try:
         content_dict = (
             raw_report if isinstance(raw_report, dict) else _json.loads(raw_report)
@@ -323,10 +345,10 @@ async def get_job_report_pdf(
         log.error("report_payload_corrupt", job_id=job_id, error=str(exc))
         raise NotFoundError(f"Job {job_id} report payload is corrupt") from exc
 
-    session_id = job.get("session_id", "")
-    sess = await SessionRepository(db, user.id).get(session_id)
-    company_name = sess.company_name if sess else "Company"
-    objective = sess.objective if sess else ""
+    brief_id = job.get("brief_id", "")
+    brief = await BriefRepository(db, user.id).get(brief_id)
+    company_name = brief.company_name if brief else "Company"
+    objective = brief.objective if brief else ""
 
     created_at_iso = job.get("updated_at") or job.get("created_at")
     created_at = (
@@ -337,7 +359,7 @@ async def get_job_report_pdf(
 
     report = Report(
         id=job_id,
-        session_id=session_id,
+        brief_id=brief_id,
         content=content,
         created_at=created_at,
     )

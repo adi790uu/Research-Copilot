@@ -1,11 +1,3 @@
-"""Dispatch a phase-2 research run to the external TypeScript worker.
-
-The worker is a Trigger.dev task ("deep-research"); we launch it over
-Trigger.dev's REST trigger API. The worker reads the job/session from the
-shared Postgres and writes results back, so the only thing we pass is the
-identifiers plus the approved plan.
-"""
-
 from __future__ import annotations
 
 import httpx
@@ -19,7 +11,7 @@ log = get_logger(__name__)
 async def trigger_research_worker(
     *,
     job_id: str,
-    session_id: str,
+    brief_id: str,
     user_id: str,
     research_plan: str,
 ) -> None:
@@ -40,7 +32,7 @@ async def trigger_research_worker(
     body = {
         "payload": {
             "jobId": job_id,
-            "sessionId": session_id,
+            "briefId": brief_id,
             "userId": user_id,
             "researchPlan": research_plan,
         },

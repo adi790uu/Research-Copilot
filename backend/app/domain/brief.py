@@ -4,7 +4,7 @@ from enum import Enum
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
 
-class SessionStatus(str, Enum):
+class BriefStatus(str, Enum):
     PENDING = "pending"
     RUNNING = "running"
     AWAITING_CLARIFICATION = "awaiting_clarification"
@@ -13,29 +13,31 @@ class SessionStatus(str, Enum):
     FAILED = "failed"
 
 
-class SessionCreate(BaseModel):
+class BriefCreate(BaseModel):
     company_name: str = Field(min_length=1, max_length=200)
     website: HttpUrl
     objective: str = Field(min_length=1, max_length=2000)
 
 
-class Session(BaseModel):
+class Brief(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
     company_name: str
     website: str
     objective: str
-    status: SessionStatus
+    status: BriefStatus
+    # {"answered": bool, "questions": [...]} — null until the gate asks.
+    clarification_question: dict | None = None
     created_at: datetime
     updated_at: datetime
 
 
-class SessionPage(BaseModel):
-    """Paginated session list. `total` is the unfiltered count so the
-    frontend can render a page count without a second round-trip."""
+class BriefPage(BaseModel):
+    """Paginated brief list. `total` is the unfiltered count so the frontend
+    can render a page count without a second round-trip."""
 
-    items: list[Session]
+    items: list[Brief]
     total: int
     limit: int
     offset: int

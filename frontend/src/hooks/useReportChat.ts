@@ -52,8 +52,8 @@ export function useReportChat(sessionId: string, enabled: boolean) {
     if (!enabled || !sessionId) return;
     let cancelled = false;
     setState((s) => ({ ...s, loading: true, error: null }));
-    api.sessions
-      .listMessages(sessionId)
+    api.briefs
+      .listMessages(sessionId, "followup")
       .then((rows: FollowupMessage[]) => {
         if (cancelled) return;
         setState((s) => ({
@@ -138,7 +138,7 @@ export function useReportChat(sessionId: string, enabled: boolean) {
         });
 
       try {
-        const res = await api.sessions.postMessage(
+        const res = await api.briefs.postMessage(
           sessionId,
           trimmed,
           ctrl.signal

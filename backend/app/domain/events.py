@@ -21,7 +21,7 @@ NodeName = Literal[
 
 
 class _BaseEvent(BaseModel):
-    session_id: str
+    brief_id: str
     at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 

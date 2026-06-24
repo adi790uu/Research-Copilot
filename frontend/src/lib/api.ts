@@ -4,6 +4,9 @@ import { useAuth } from "./auth";
 
 import type {
   ActivitySummary,
+  Brief,
+  BriefCreate,
+  BriefPage,
   ChatTurnPayload,
   FollowupMessage,
   ResearchJob,
@@ -11,9 +14,6 @@ import type {
   ResearchPlan,
   ResearchTask,
   ResearcherResult,
-  Session,
-  SessionCreate,
-  SessionPage,
   User,
 } from "./types";
 
@@ -89,10 +89,10 @@ interface ApiClient {
     get: () => Promise<User>;
     activity: () => Promise<ActivitySummary>;
   };
-  sessions: {
-    create: (payload: SessionCreate) => Promise<Session>;
-    list: (params?: { limit?: number; offset?: number }) => Promise<SessionPage>;
-    get: (id: string) => Promise<Session>;
+  briefs: {
+    create: (payload: BriefCreate) => Promise<Brief>;
+    list: (params?: { limit?: number; offset?: number }) => Promise<BriefPage>;
+    get: (id: string) => Promise<Brief>;
     /** Phase 1 SSE chat: returns the raw Response so the caller can read
      * the event stream off `response.body`. */
     chat: (
@@ -106,11 +106,15 @@ interface ApiClient {
       id: string,
       plan?: ResearchPlan
     ) => Promise<{ job_id: string }>;
-    /** Most-recent job for this session (404 if none). */
+    /** Most-recent job for this brief (404 if none). */
     latestJob: (id: string) => Promise<ResearchJob>;
     listJobs: (id: string) => Promise<ResearchJob[]>;
-    /** Follow-up chat history (post-report). */
-    listMessages: (id: string) => Promise<FollowupMessage[]>;
+    /** Persisted chat turns, optionally scoped to one surface:
+     * `workflow` (phase-1 intro + clarification) or `followup` (post-report). */
+    listMessages: (
+      id: string,
+      kind?: "workflow" | "followup"
+    ) => Promise<FollowupMessage[]>;
     /** Post a follow-up message; returns the raw streaming Response. */
     postMessage: (
       id: string,
@@ -134,9 +138,9 @@ function buildClient(fetcher: Fetcher, getToken: TokenSource): ApiClient {
       get: () => fetcher<User>("/me"),
       activity: () => fetcher<ActivitySummary>("/me/activity"),
     },
-    sessions: {
+    briefs: {
       create: (payload) =>
-        fetcher<Session>("/sessions", {
+        fetcher<Brief>("/briefs", {
           method: "POST",
           body: JSON.stringify(payload),
         }),
@@ -145,9 +149,9 @@ function buildClient(fetcher: Fetcher, getToken: TokenSource): ApiClient {
         if (params?.limit != null) q.set("limit", String(params.limit));
         if (params?.offset != null) q.set("offset", String(params.offset));
         const qs = q.toString();
-        return fetcher<SessionPage>(`/sessions${qs ? `?${qs}` : ""}`);
+        return fetcher<BriefPage>(`/briefs${qs ? `?${qs}` : ""}`);
       },
-      get: (id) => fetcher<Session>(`/sessions/${id}`),
+      get: (id) => fetcher<Brief>(`/briefs/${id}`),
       chat: async (id, payload, signal) => {
         const headers: Record<string, string> = {
           "Content-Type": "application/json",
@@ -157,7 +161,7 @@ function buildClient(fetcher: Fetcher, getToken: TokenSource): ApiClient {
           const token = getToken();
           if (token) headers.Authorization = `Bearer ${token}`;
         }
-        return fetch(`${BASE_URL}/sessions/${id}/chat`, {
+        return fetch(`${BASE_URL}/briefs/${id}/chat`, {
           method: "POST",
           headers,
           body: JSON.stringify(payload),
@@ -165,14 +169,16 @@ function buildClient(fetcher: Fetcher, getToken: TokenSource): ApiClient {
         });
       },
       approvePlan: (id, plan) =>
-        fetcher<{ job_id: string }>(`/sessions/${id}/plan/approve`, {
+        fetcher<{ job_id: string }>(`/briefs/${id}/plan/approve`, {
           method: "POST",
           body: JSON.stringify(plan ? { plan } : {}),
         }),
-      latestJob: (id) => fetcher<ResearchJob>(`/sessions/${id}/job`),
-      listJobs: (id) => fetcher<ResearchJob[]>(`/sessions/${id}/jobs`),
-      listMessages: (id) =>
-        fetcher<FollowupMessage[]>(`/sessions/${id}/messages`),
+      latestJob: (id) => fetcher<ResearchJob>(`/briefs/${id}/job`),
+      listJobs: (id) => fetcher<ResearchJob[]>(`/briefs/${id}/jobs`),
+      listMessages: (id, kind) =>
+        fetcher<FollowupMessage[]>(
+          `/briefs/${id}/messages${kind ? `?kind=${kind}` : ""}`
+        ),
       postMessage: async (id, content, signal) => {
         const headers: Record<string, string> = {
           "Content-Type": "application/json",
@@ -182,7 +188,7 @@ function buildClient(fetcher: Fetcher, getToken: TokenSource): ApiClient {
           const token = getToken();
           if (token) headers.Authorization = `Bearer ${token}`;
         }
-        return fetch(`${BASE_URL}/sessions/${id}/messages`, {
+        return fetch(`${BASE_URL}/briefs/${id}/messages`, {
           method: "POST",
           headers,
           body: JSON.stringify({ content }),

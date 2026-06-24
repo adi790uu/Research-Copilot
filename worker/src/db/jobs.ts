@@ -2,34 +2,35 @@ import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/db/client";
 import {
+  briefs,
+  researchJobEvents,
   researchJobResearchers,
   researchJobs,
   researchTasks,
-  sessions,
   type Source,
 } from "@/db/schema";
 
 // Mirrors app/services/job_store.py. The Python approve endpoint creates the
-// job row before triggering the worker; the worker reads session context and
+// job row before triggering the worker; the worker reads brief context and
 // writes progress/results back to the same tables.
 
-export type SessionContext = {
+export type BriefContext = {
   companyName: string;
   website: string;
   objective: string;
   userId: string;
 };
 
-export async function getSession(sessionId: string): Promise<SessionContext | null> {
+export async function getBrief(briefId: string): Promise<BriefContext | null> {
   const [row] = await db
     .select({
-      companyName: sessions.companyName,
-      website: sessions.website,
-      objective: sessions.objective,
-      userId: sessions.userId,
+      companyName: briefs.companyName,
+      website: briefs.website,
+      objective: briefs.objective,
+      userId: briefs.userId,
     })
-    .from(sessions)
-    .where(eq(sessions.id, sessionId))
+    .from(briefs)
+    .where(eq(briefs.id, briefId))
     .limit(1);
   return row ?? null;
 }
@@ -51,6 +52,18 @@ export async function updateJobResult(
     .update(researchJobs)
     .set({ status: "completed", finalReport, sources, updatedAt: sql`now()` })
     .where(eq(researchJobs.id, jobId));
+}
+
+/** Append a stage marker to the job's event log (e.g. research/report start),
+ * so the UI can show an accurate, reload-safe status without inferring it. */
+export async function appendJobEvent(
+  jobId: string,
+  eventType: string,
+  data: Record<string, unknown> = {},
+): Promise<void> {
+  await db
+    .insert(researchJobEvents)
+    .values({ jobId, eventType, data, createdAt: sql`now()` });
 }
 
 export async function appendResearcherResult(

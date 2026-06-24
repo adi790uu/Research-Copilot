@@ -25,7 +25,7 @@ export function useLatestJob(
     queryKey: ["session-job", sessionId],
     queryFn: async () => {
       try {
-        return await api.sessions.latestJob(sessionId);
+        return await api.briefs.latestJob(sessionId);
       } catch (err) {
         if (err instanceof ApiError && err.status === 404) return null;
         throw err;

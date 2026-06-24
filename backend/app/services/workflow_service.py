@@ -2,14 +2,15 @@
 
 Two phases:
 
-1. **Phase 1 (foreground)** — clarify → brief → plan. Drives the graph
-   inline so the caller can stream events out as SSE. Closes when the
-   graph pauses (clarification needed) or the plan is ready.
+1. **Phase 1 (foreground)** — clarify → brief → plan. Drives the graph inline
+   so the caller can stream events out as SSE. Phase 1 is message-driven: the
+   caller passes the user's turn as text (the first turn is the labeled
+   Company/Website/Objective block built client-side); everything else lives in
+   the LangGraph checkpoint, so we never read the brief row here.
 
-2. **Phase 2 (external worker)** — supervisor + researchers + report. Kicked
-   off by `approve_plan`, which creates a `ResearchJob` row and triggers the
-   TypeScript Trigger.dev worker. The frontend polls `/jobs/{id}` until the
-   job is completed or failed.
+2. **Phase 2 (external worker)** — supervisor + researchers + report. Kicked off
+   by `approve_plan`, which creates a `ResearchJob` row and triggers the
+   TypeScript Trigger.dev worker. The frontend polls `/jobs/{id}` until done.
 """
 
 from __future__ import annotations
@@ -37,7 +38,7 @@ from app.domain.events import (
     WorkflowEvent,
 )
 from app.persistence.db import get_sessionmaker
-from app.persistence.repositories import SessionRepository
+from app.persistence.repositories import BriefRepository, MessageRepository
 from app.services import job_store
 from app.services.worker_trigger import trigger_research_worker
 from app.workflow.graph import build_graph
@@ -60,40 +61,58 @@ class WorkflowService:
 
     # ----- builders ---------------------------------------------------------
 
-    def _build(
-        self, *, session_id: str, company_name: str, website: str
-    ) -> tuple[Any, RunnableConfig]:
-        """Build the LangGraph + RunnableConfig for a session.
-
-        Graph 1 (clarify → brief → plan) reads its model from config via
-        `helpers._create_model`, so there's nothing to inject here.
-        """
+    def _build(self, *, brief_id: str) -> tuple[Any, RunnableConfig]:
+        """Build the LangGraph + RunnableConfig for a brief thread."""
         settings = get_settings()
         graph = build_graph(checkpointer=self._checkpointer)
         config: RunnableConfig = {
             "configurable": {
-                "thread_id": session_id,
-                "company_name": company_name,
-                "website": website,
+                "thread_id": brief_id,
                 "allow_clarification": settings.workflow_allow_clarification,
             }
         }
         return graph, config
 
-    # ----- session lookup ---------------------------------------------------
+    # ----- persistence helpers ---------------------------------------------
 
-    async def _load_session(self, *, session_id: str, user_id: str) -> tuple[str, str, str]:
+    async def _set_status(self, *, brief_id: str, user_id: str, status: str) -> None:
         sessionmaker = get_sessionmaker()
         async with sessionmaker() as db:
-            row = await SessionRepository(db, user_id).get(session_id)
-            if row is None:
-                raise NotFoundError(f"Session {session_id} not found")
-            return row.company_name, row.website, row.objective
+            await BriefRepository(db, user_id).set_status(brief_id, status)
+            await db.commit()
 
-    async def _set_status(self, *, session_id: str, user_id: str, status: str) -> None:
+    async def _record_user_turn(
+        self,
+        *,
+        brief_id: str,
+        user_id: str,
+        content: str,
+        clarification_answered: bool = False,
+        clarification_answers: list[dict] | None = None,
+    ) -> None:
+        """Store the user message and, when this turn answers the clarification,
+        flip + record the answers on the brief — all in one transaction so the
+        messages table and the brief's clarification JSON can't diverge."""
         sessionmaker = get_sessionmaker()
         async with sessionmaker() as db:
-            await SessionRepository(db, user_id).set_status(session_id, status)
+            await MessageRepository(db, brief_id).add(
+                role="user", content=content, kind="workflow"
+            )
+            if clarification_answered:
+                await BriefRepository(db, user_id).mark_clarification_answered(
+                    brief_id, clarification_answers
+                )
+            await db.commit()
+
+    async def _store_clarification(self, *, brief_id: str, user_id: str, questions: list[dict]) -> None:
+        """Persist the gate's questions on the brief (answered=false).
+
+        The clarification is structured state on the brief, not a chat message —
+        the frontend renders it from `brief.clarification_question`.
+        """
+        sessionmaker = get_sessionmaker()
+        async with sessionmaker() as db:
+            await BriefRepository(db, user_id).set_clarification_question(brief_id, questions)
             await db.commit()
 
     # ----- phase 1 (foreground) --------------------------------------------
@@ -101,96 +120,72 @@ class WorkflowService:
     async def run_phase1(
         self,
         *,
-        session_id: str,
+        brief_id: str,
         user_id: str,
         message: str | None = None,
+        clarification_answered: bool = False,
+        clarification_answers: list[dict] | None = None,
     ) -> AsyncIterator[WorkflowEvent]:
         """Drive phase 1 (clarify → brief → plan), yielding events as they happen.
 
-        `message` is the user's turn:
-        - `None` on the first call (the seed Company/Website/Objective message
-          is built from the session row).
-        - A clarification answer on subsequent calls; appended as a new
-          HumanMessage to the checkpointed history.
+        `message` is the user's turn appended to the checkpointed history:
+        - The labeled Company/Website/Objective block on the first turn.
+        - A clarification answer on later turns.
+        - `None` to subscribe/resume without injecting a turn.
 
-        Stops when the graph pauses at:
-        - `clarify_with_user` (ClarificationRequested)
-        - `create_research_plan` (PlanReady, via interrupt_after)
-        - Or terminates with `final_report` already set (unlikely in phase 1).
+        When `clarification_answered` is set, the brief's clarification gate is
+        flipped to answered so the user isn't re-prompted.
         """
-        company_name, website, objective = await self._load_session(
-            session_id=session_id, user_id=user_id
-        )
-        graph, config = self._build(
-            session_id=session_id, company_name=company_name, website=website
-        )
+        graph, config = self._build(brief_id=brief_id)
+        await self._set_status(brief_id=brief_id, user_id=user_id, status="running")
 
-        await self._set_status(session_id=session_id, user_id=user_id, status="running")
-
-        # Build the input to ainvoke based on whether this is the first turn.
-        input_state: dict[str, Any] | None
-        if message is None:
-            snapshot = await graph.aget_state(config)
-            has_prior = bool(snapshot and snapshot.values)
-            if has_prior:
-                # Resume an in-progress run without injecting a new message —
-                # treat as a "subscribe" so we don't double-seed.
-                input_state = None
-            else:
-                intro = (
-                    f"Company: {company_name}\n"
-                    f"Website: {website}\n"
-                    f"Objective: {objective}"
-                )
-                input_state = {
-                    "messages": [HumanMessage(content=intro)],
-                    "session_id": session_id,
-                    "company_name": company_name,
-                    "website": website,
-                    "objective": objective,
-                }
-        else:
-            input_state = {"messages": [HumanMessage(content=message.strip())]}
+        input_state: dict[str, Any] | None = None
+        if message and message.strip():
+            text = message.strip()
+            await self._record_user_turn(
+                brief_id=brief_id,
+                user_id=user_id,
+                content=text,
+                clarification_answered=clarification_answered,
+                clarification_answers=clarification_answers,
+            )
+            input_state = {"messages": [HumanMessage(content=text)]}
 
         return _phase1_event_iter(
             graph=graph,
             config=config,
             input_state=input_state,
-            session_id=session_id,
+            brief_id=brief_id,
             user_id=user_id,
             set_status=self._set_status,
+            store_clarification=self._store_clarification,
         )
 
     # ----- phase 2 (external worker) ---------------------------------------
 
-    async def approve_plan(self, *, session_id: str, user_id: str) -> str:
+    async def approve_plan(self, *, brief_id: str, user_id: str) -> str:
         """Create a ResearchJob and trigger the external worker. Returns job_id.
 
         Reads the approved plan off the checkpoint, persists it on a new job
         row, then dispatches the Trigger.dev worker. If dispatch fails the job
         is marked failed so the caller sees a clear error.
         """
-        company_name, website, _ = await self._load_session(
-            session_id=session_id, user_id=user_id
-        )
-        graph, config = self._build(
-            session_id=session_id, company_name=company_name, website=website
-        )
+        graph, config = self._build(brief_id=brief_id)
 
         snapshot = await graph.aget_state(config)
         values: dict[str, Any] = (snapshot.values if snapshot else {}) or {}
         plan = values.get("research_plan") or {}
         if not plan:
-            raise AppError("No research plan is ready to approve for this session")
+            raise AppError("No research plan is ready to approve for this brief")
         plan_text = json.dumps(plan)
 
         job_id = await job_store.create_job(
-            session_id=session_id, user_id=user_id, research_plan=plan_text
+            brief_id=brief_id, user_id=user_id, research_plan=plan_text
         )
         try:
             await trigger_research_worker(
                 job_id=job_id,
-                session_id=session_id,
+                brief_id=brief_id,
                 user_id=user_id,
                 research_plan=plan_text,
             )
@@ -198,31 +193,26 @@ class WorkflowService:
             await job_store.update_job_status(job_id, "failed")
             raise AppError(f"Could not trigger research worker: {exc}") from exc
 
-        await self._set_status(session_id=session_id, user_id=user_id, status="running")
+        await self._set_status(brief_id=brief_id, user_id=user_id, status="running")
         return job_id
 
     # ----- plan editing (no run) -------------------------------------------
 
     async def save_plan_edits(
-        self, *, session_id: str, user_id: str, plan: dict[str, Any]
+        self, *, brief_id: str, user_id: str, plan: dict[str, Any]
     ) -> dict[str, Any]:
         sessionmaker = get_sessionmaker()
         async with sessionmaker() as db:
-            repo = SessionRepository(db, user_id)
-            row = await repo.get(session_id)
+            row = await BriefRepository(db, user_id).get(brief_id)
             if row is None:
-                raise NotFoundError(f"Session {session_id} not found")
+                raise NotFoundError(f"Brief {brief_id} not found")
             if row.status != "awaiting_plan_approval":
                 raise AppError(
                     f"Plan can only be edited while awaiting approval; "
                     f"current status: {row.status}"
                 )
-            company_name = row.company_name
-            website = row.website
 
-        graph, config = self._build(
-            session_id=session_id, company_name=company_name, website=website
-        )
+        graph, config = self._build(brief_id=brief_id)
         await graph.aupdate_state(config, {"research_plan": plan})
         return plan
 
@@ -235,24 +225,24 @@ async def _phase1_event_iter(
     graph: Any,
     config: RunnableConfig,
     input_state: dict[str, Any] | None,
-    session_id: str,
+    brief_id: str,
     user_id: str,
     set_status: Any,
+    store_clarification: Any,
 ) -> AsyncIterator[WorkflowEvent]:
     """Stream phase-1 events from the LangGraph.
 
-    Tails `astream(stream_mode="updates")` and emits a `NodeStarted` +
-    `NodeCompleted` pair per phase-1 node update. The stream stops when:
-      - The graph terminates with a research plan ready. The session is
-        marked `awaiting_plan_approval` and `PlanReady{plan}` is yielded
-        (no job_id yet — approval creates it). The frontend then
-        edits/approves via `POST /sessions/{id}/plan/approve`.
-      - `clarify_with_user` ends the run with a clarification marker.
-      - Or it raises, in which case RunFailed is yielded.
+    Tails `astream(stream_mode="updates")`, emitting a NodeStarted +
+    NodeCompleted pair per phase-1 node. Stops when the graph pauses for
+    clarification, when the plan is ready, or on error.
     """
-    yield RunStarted(session_id=session_id)
+    yield RunStarted(brief_id=brief_id)
     started = time.perf_counter()
     clarification_emitted = False
+
+    async def _emit_clarification(questions: list[dict]) -> None:
+        await store_clarification(brief_id=brief_id, user_id=user_id, questions=questions)
+        await set_status(brief_id=brief_id, user_id=user_id, status="awaiting_clarification")
 
     try:
         async for stream_data in graph.astream(input_state, config, stream_mode="updates"):
@@ -262,10 +252,10 @@ async def _phase1_event_iter(
                 if node_key not in _PHASE1_NODES:
                     continue
                 node_name: NodeName = node_key  # type: ignore[assignment]
-                yield NodeStarted(session_id=session_id, node=node_name)
+                yield NodeStarted(brief_id=brief_id, node=node_name)
                 elapsed_ms = int((time.perf_counter() - started) * 1000)
                 yield NodeCompleted(
-                    session_id=session_id,
+                    brief_id=brief_id,
                     node=node_name,
                     duration_ms=max(0, elapsed_ms),
                 )
@@ -279,60 +269,44 @@ async def _phase1_event_iter(
                     marker = _extract_clarify_marker(node_update.get("messages") or [])
                     if marker and marker.get("type") == "clarification":
                         clarification_emitted = True
-                        yield ClarificationRequested(
-                            session_id=session_id,
-                            questions=list(marker.get("questions", []) or []),
-                        )
-                        await set_status(
-                            session_id=session_id,
-                            user_id=user_id,
-                            status="awaiting_clarification",
-                        )
+                        questions = list(marker.get("questions", []) or [])
+                        yield ClarificationRequested(brief_id=brief_id, questions=questions)
+                        await _emit_clarification(questions)
                         return
     except Exception as exc:  # noqa: BLE001
-        log.exception("phase1_failed", session_id=session_id)
-        await set_status(session_id=session_id, user_id=user_id, status="failed")
-        yield RunFailed(session_id=session_id, message=str(exc))
+        log.exception("phase1_failed", brief_id=brief_id)
+        await set_status(brief_id=brief_id, user_id=user_id, status="failed")
+        yield RunFailed(brief_id=brief_id, message=str(exc))
         return
 
     # Stream ended — figure out where we landed.
     try:
         snapshot = await graph.aget_state(config)
     except Exception as exc:  # noqa: BLE001
-        log.exception("phase1_aget_state_failed", session_id=session_id)
-        await set_status(session_id=session_id, user_id=user_id, status="failed")
-        yield RunFailed(session_id=session_id, message=str(exc))
+        log.exception("phase1_aget_state_failed", brief_id=brief_id)
+        await set_status(brief_id=brief_id, user_id=user_id, status="failed")
+        yield RunFailed(brief_id=brief_id, message=str(exc))
         return
 
     values: dict[str, Any] = (snapshot.values if snapshot else {}) or {}
 
     plan = values.get("research_plan")
     if plan:
-        # Graph 1 done: hold for the user to review/approve. Phase 2 is
-        # kicked off out-of-band by POST /sessions/{id}/plan/approve.
         await set_status(
-            session_id=session_id, user_id=user_id, status="awaiting_plan_approval"
+            brief_id=brief_id, user_id=user_id, status="awaiting_plan_approval"
         )
-        yield PlanReady(session_id=session_id, plan=plan)
+        yield PlanReady(brief_id=brief_id, plan=plan)
         return
 
-    # Graph terminated without hitting plan or clarification — either
-    # clarification already handled (we returned above) or something
-    # unexpected. Surface the last AI message for visibility.
     marker = _extract_clarify_marker(values.get("messages") or [])
     if marker and marker.get("type") == "clarification" and not clarification_emitted:
-        yield ClarificationRequested(
-            session_id=session_id,
-            questions=list(marker.get("questions", []) or []),
-        )
-        await set_status(
-            session_id=session_id, user_id=user_id, status="awaiting_clarification"
-        )
+        questions = list(marker.get("questions", []) or [])
+        yield ClarificationRequested(brief_id=brief_id, questions=questions)
+        await _emit_clarification(questions)
         return
 
-    # Should not happen in phase 1, but don't deadlock the stream.
-    await set_status(session_id=session_id, user_id=user_id, status="failed")
-    yield RunFailed(session_id=session_id, message="Phase 1 ended in an unexpected state")
+    await set_status(brief_id=brief_id, user_id=user_id, status="failed")
+    yield RunFailed(brief_id=brief_id, message="Phase 1 ended in an unexpected state")
 
 
 def _extract_clarify_marker(messages: list) -> dict[str, Any] | None:

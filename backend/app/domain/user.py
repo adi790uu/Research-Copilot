@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
-from app.domain.session import Session
+from app.domain.brief import Brief
 
 
 class User(BaseModel):
@@ -17,9 +17,9 @@ class User(BaseModel):
 
 class ActivitySummary(BaseModel):
     user: User
-    session_count: int
+    brief_count: int
     job_count: int
-    recent_sessions: list[Session]
+    recent_briefs: list[Brief]
 
 
 class Credentials(BaseModel):

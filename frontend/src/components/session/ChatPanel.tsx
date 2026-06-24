@@ -8,11 +8,10 @@ import {
 
 import type { ReportChatTurn } from "../../hooks/useReportChat";
 import { type ChatTurn, type RunPhase } from "../../hooks/useWorkflowChat";
+import type { ResearchStatus } from "../../lib/runStatus";
 import type {
   ClarificationQuestion,
-  ResearchJob,
   ResearchPlan,
-  ResearcherResult,
   WorkflowNode,
 } from "../../lib/types";
 import { ClarificationCard } from "./ClarificationCard";
@@ -47,11 +46,10 @@ interface Props {
    * applicable) follow-up history have all resolved. */
   initialLoading: boolean;
 
-  /** Phase-2 state — drives the thinking bubble's activity caption so it
-   * keeps narrating live work (researchers running, writing the brief)
-   * after the phase-1 SSE closes. */
-  job: ResearchJob | null;
-  researchers: ResearcherResult[];
+  /** Derived phase-2 status — drives the thinking bubble so it keeps
+   * narrating live work (researching, writing the report) after the
+   * phase-1 SSE closes, and stays accurate across reloads. */
+  status: ResearchStatus;
 }
 
 export function ChatPanel({
@@ -71,8 +69,7 @@ export function ChatPanel({
   followupError,
   onFollowupSend,
   initialLoading,
-  job,
-  researchers,
+  status,
 }: Props) {
   // Conversation feed: drop node_status turns (they only feed the thinking
   // caption) and all clarification turns (the question is pinned in the footer
@@ -94,9 +91,8 @@ export function ChatPanel({
   // "thinking" reply bubble. We suppress it whenever the conversation is
   // waiting on the user (clarification / plan approval) or already settled
   // (report ready / failed) — those states own the bottom of the feed.
-  const hasReport = !!job?.final_report;
-  const jobFailed = job?.status === "failed";
-  const jobRunning = !!job && !hasReport && !jobFailed;
+  const researchActive =
+    status.stage === "researching" || status.stage === "writing_report";
   const awaitingClarification =
     phase === "awaiting_clarification" &&
     turns.some(
@@ -105,13 +101,13 @@ export function ChatPanel({
   const awaitingApproval = phase === "awaiting_plan_approval";
 
   const showThinking =
-    !hasReport &&
-    !jobFailed &&
+    status.stage !== "done" &&
+    status.stage !== "failed" &&
     !awaitingClarification &&
     !awaitingApproval &&
-    (streaming || phase === "running" || jobRunning);
+    (streaming || phase === "running" || researchActive);
 
-  const activity = deriveActivity(turns, job, researchers);
+  const activity = deriveActivity(turns, status);
 
   // Auto-scroll to the newest message so the to-and-fro stays in view.
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -615,120 +611,53 @@ function PlanCard({
   );
 }
 
-// ─── Activity caption (derived from phase-1 SSE + phase-2 polling) ──────────
+// ─── Activity caption (phase-1 SSE node steps + phase-2 status) ─────────────
 
 type NodeStatusTurn = Extract<ChatTurn, { kind: "node_status" }>;
 
-/** The five "phases" the run walks through. Phase 1 events arrive from
- * SSE; phase 2 is derived from polled job + researcher state. */
-const RUN_PHASES: { id: number; label: string }[] = [
-  { id: 1, label: "Checking the objective" },
-  { id: 2, label: "Structuring the brief" },
-  { id: 3, label: "Building the research plan" },
-  { id: 4, label: "Researching" },
-  { id: 5, label: "Writing the brief" },
+const PHASE1_STEPS: { node: WorkflowNode; label: string }[] = [
+  { node: "clarify_with_user", label: "Checking the objective" },
+  { node: "write_research_brief", label: "Structuring the brief" },
+  { node: "create_research_plan", label: "Designing the research plan" },
 ];
 
-type StepState = "done" | "live" | "pending" | "failed";
-
-/** Pick the single line the thinking bubble should narrate: the live (or
- * failed) phase, with a count sublabel once researchers report back. */
+/** The single line the thinking bubble narrates. Phase-1 reads the live (or
+ * failed) node step; once phase 1 is past, the phase-2 status takes over. */
 function deriveActivity(
   turns: ChatTurn[],
-  job: ResearchJob | null,
-  researchers: ResearcherResult[]
+  status: ResearchStatus
 ): { label: string; detail?: string } {
-  const ordered = orderedNodeStatuses(turns);
-  const states = computePhaseStates(ordered, job, researchers);
-  const current =
-    states.find((s) => s.state === "failed") ??
-    states.find((s) => s.state === "live");
-  if (!current) return { label: "Thinking" };
-  return { label: current.label, detail: current.sublabel };
+  const latest = latestNodePhase(turns);
+  for (const { node, label } of PHASE1_STEPS) {
+    const st = latest.get(node);
+    if (st === "failed") return { label, detail: "needs another pass" };
+    if (st === "running") return { label };
+  }
+
+  if (status.stage === "researching") {
+    if (status.anglesTotal > 0) {
+      return {
+        label: `Researching ${status.anglesTotal} ${
+          status.anglesTotal === 1 ? "angle" : "angles"
+        }`,
+        detail: `${status.anglesDone} of ${status.anglesTotal} done`,
+      };
+    }
+    return { label: "Researching", detail: "scoping the angles" };
+  }
+  if (status.stage === "writing_report") return { label: "Writing the report" };
+  return { label: "Thinking" };
 }
 
-/** Latest phase per node, preserving arrival order. */
-function orderedNodeStatuses(turns: ChatTurn[]): NodeStatusTurn[] {
-  const steps = turns.filter(
-    (t): t is NodeStatusTurn =>
-      t.role === "assistant" && t.kind === "node_status"
-  );
-  const ordered: NodeStatusTurn[] = [];
-  const seen = new Map<string, number>();
-  for (const s of steps) {
-    const idx = seen.get(s.node);
-    if (idx === undefined) {
-      seen.set(s.node, ordered.length);
-      ordered.push(s);
-    } else {
-      ordered[idx] = s;
+/** Latest phase per phase-1 node. */
+function latestNodePhase(turns: ChatTurn[]): Map<WorkflowNode, string> {
+  const latest = new Map<WorkflowNode, string>();
+  for (const t of turns) {
+    if (t.role === "assistant" && t.kind === "node_status") {
+      latest.set((t as NodeStatusTurn).node, (t as NodeStatusTurn).phase);
     }
   }
-  return ordered;
-}
-
-/** Derive the state of each of the 5 phases. Phase 1-3 read directly
- * from SSE node_status turns; phase 4-5 are derived from the polled job
- * + researcher rows (the SSE has long since closed by then). */
-function computePhaseStates(
-  ordered: NodeStatusTurn[],
-  job: ResearchJob | null,
-  researchers: ResearcherResult[]
-): {
-  phase: number;
-  label: string;
-  state: StepState;
-  sublabel?: string;
-}[] {
-  const NODE_TO_PHASE: Partial<Record<WorkflowNode, number>> = {
-    clarify_with_user: 1,
-    write_research_brief: 2,
-    create_research_plan: 3,
-  };
-
-  const stepState: Record<number, StepState> = {
-    1: "pending",
-    2: "pending",
-    3: "pending",
-    4: "pending",
-    5: "pending",
-  };
-
-  // Phase 1 — read directly off SSE events.
-  for (const s of ordered) {
-    const p = NODE_TO_PHASE[s.node];
-    if (p === undefined) continue;
-    stepState[p] =
-      s.phase === "completed" ? "done" : s.phase === "failed" ? "failed" : "live";
-  }
-
-  // Phase 1-3 fully done? Once they are, derive phase 4 + 5 from job/researchers.
-  const phase1to3Done = [1, 2, 3].every((p) => stepState[p] === "done");
-
-  if (phase1to3Done) {
-    if (job?.status === "failed") {
-      stepState[4] = "failed";
-    } else if (job?.final_report || job?.status === "completed") {
-      stepState[4] = "done";
-      stepState[5] = "done";
-    } else {
-      // Job running (or just launched, row not fetched yet): phase 4 stays
-      // live until the job completes; phase 5 flips with it as the report
-      // lands. The awaiting-approval case never reaches the bubble, so it's
-      // safe to narrate phase 4 here unconditionally.
-      stepState[4] = "live";
-    }
-  }
-
-  return RUN_PHASES.map(({ id, label }) => {
-    let sublabel: string | undefined;
-    if (id === 4 && stepState[4] === "live" && researchers.length > 0) {
-      sublabel = `${researchers.length} ${
-        researchers.length === 1 ? "agent" : "agents"
-      } reported back`;
-    }
-    return { phase: id, label, state: stepState[id], sublabel };
-  });
+  return latest;
 }
 
 function FollowupTurnView({ turn }: { turn: ReportChatTurn }) {

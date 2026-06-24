@@ -3,14 +3,14 @@ import { Link } from "react-router-dom";
 
 import { ApiError, useApi } from "../../lib/api";
 import { formatRelative, shortId } from "../../lib/format";
-import type { Session } from "../../lib/types";
+import type { Brief } from "../../lib/types";
 import { Status, statusTone } from "../ui/Pill";
 
 export function SessionList() {
   const api = useApi();
   const sessions = useQuery({
-    queryKey: ["sessions", { limit: 50, offset: 0 }],
-    queryFn: () => api.sessions.list({ limit: 50, offset: 0 }),
+    queryKey: ["briefs", { limit: 50, offset: 0 }],
+    queryFn: () => api.briefs.list({ limit: 50, offset: 0 }),
   });
 
   if (sessions.isLoading) return <SkeletonList />;
@@ -28,7 +28,7 @@ export function SessionList() {
   );
 }
 
-function SessionRow({ session, index }: { session: Session; index: number }) {
+function SessionRow({ session, index }: { session: Brief; index: number }) {
   return (
     <li className="rule-b">
       <Link

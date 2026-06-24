@@ -14,8 +14,8 @@ export type Source = {
   type?: SourceType | null;
 };
 
-// Read-only: the worker pulls company context from the session row.
-export const sessions = pgTable("sessions", {
+// Read-only: the worker pulls company context from the brief row.
+export const briefs = pgTable("briefs", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull(),
   companyName: text("company_name").notNull(),
@@ -26,7 +26,7 @@ export const sessions = pgTable("sessions", {
 
 export const researchJobs = pgTable("research_jobs", {
   id: text("id").primaryKey(),
-  sessionId: text("session_id").notNull(),
+  briefId: text("brief_id").notNull(),
   userId: text("user_id").notNull(),
   status: text("status").notNull().default("pending"),
   researchPlan: text("research_plan"),

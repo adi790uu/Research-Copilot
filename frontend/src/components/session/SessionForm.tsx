@@ -8,6 +8,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 
 import { ApiError, useApi } from "../../lib/api";
+import type { BriefPage } from "../../lib/types";
 
 interface FormState {
   company_name: string;
@@ -29,10 +30,26 @@ export function SessionForm() {
   const [form, setForm] = useState<FormState>(EMPTY);
 
   const create = useMutation({
-    mutationFn: () => api.sessions.create(form),
-    onSuccess: (session) => {
-      queryClient.invalidateQueries({ queryKey: ["sessions"] });
-      navigate(`/app/sessions/${session.id}`);
+    mutationFn: () => api.briefs.create(form),
+    onSuccess: (brief) => {
+      // Push the new brief straight into the cached brief lists so the
+      // sidebar updates instantly — no refetch, no flicker. We only prepend
+      // to first-page lists (offset 0); every page still bumps `total` so
+      // pagination counts stay right. The cache remains normally
+      // invalidatable, so any later reload re-syncs from the server.
+      queryClient.setQueriesData<BriefPage>(
+        { queryKey: ["briefs"] },
+        (prev) =>
+          prev && {
+            ...prev,
+            total: prev.total + 1,
+            items:
+              prev.offset === 0
+                ? [brief, ...prev.items].slice(0, prev.limit)
+                : prev.items,
+          }
+      );
+      navigate(`/app/sessions/${brief.id}`);
     },
   });
 

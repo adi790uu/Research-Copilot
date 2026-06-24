@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { SessionStatus } from "../../lib/types";
+import type { BriefStatus } from "../../lib/types";
 
 export type Tone = "good" | "bad" | "neutral" | "warn" | "info";
 
@@ -34,7 +34,7 @@ export function Status({
   );
 }
 
-export function statusTone(status: SessionStatus): Tone {
+export function statusTone(status: BriefStatus): Tone {
   switch (status) {
     case "pending":
       return "neutral";
@@ -50,7 +50,7 @@ export function statusTone(status: SessionStatus): Tone {
   }
 }
 
-export function statusLabel(status: SessionStatus): string {
+export function statusLabel(status: BriefStatus): string {
   switch (status) {
     case "awaiting_clarification":
       return "awaiting clarification";

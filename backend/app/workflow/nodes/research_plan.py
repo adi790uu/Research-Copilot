@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, get_buffer_string
 from langchain_core.runnables import RunnableConfig
 
 from app.workflow.helpers import _create_model, _get_today_str
@@ -23,8 +23,7 @@ async def create_research_plan(state: AgentState, config: RunnableConfig) -> dic
     )
 
     prompt = research_plan_prompt.format(
-        company_name=state.get("company_name", ""),
-        website=state.get("website", ""),
+        messages=get_buffer_string(state.get("messages", [])),
         research_brief=state.get("research_brief", ""),
         date=_get_today_str(),
     )
