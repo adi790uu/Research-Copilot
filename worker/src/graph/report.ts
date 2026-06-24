@@ -11,7 +11,23 @@ import {
 } from "@/graph/report-schema";
 import type { Graph2State } from "@/graph/state";
 import { createModel, isTokenLimitExceeded } from "@/llm/models";
-import { finalReportPrompt, reviewAndStitchPrompt, todayStr } from "@/prompts";
+import {
+  finalReportPrompt,
+  regroundSectionPrompt,
+  reviewAndStitchPrompt,
+  todayStr,
+} from "@/prompts";
+
+// Factual sections that must cite sources; the advisory/gap sections
+// (discovery_questions, outreach_strategy, unknowns) are legitimately allowed
+// to cite little or nothing, so they're exempt from the re-grounding pass.
+const GROUNDED_SECTIONS = new Set<ReportSectionName>([
+  "company_overview",
+  "products_and_services",
+  "target_customers",
+  "business_signals",
+  "risks_and_challenges",
+]);
 
 // Ported from app/workflow/nodes/final_report.py.
 // Pass 1: structured ReportContent (8 sections). Pass 2: per-section review.
@@ -77,13 +93,48 @@ export async function finalReportNode(state: Graph2State): Promise<Partial<Graph
         companyName: state.companyName,
         section: name,
         draftContent: section.content,
-        findings: findingsText.slice(0, 6000),
+        findings: findingsText.slice(0, 24000),
         validSourceIds: [...validIds].sort().join(", ") || "(none)",
         date,
       });
       try {
+        const res = filterSourceIds(
+          (await reviewer.invoke([new HumanMessage(prompt)])) as ReportSection,
+          validIds,
+        );
+        // Reject a polish that collapsed into an instruction-echo or otherwise
+        // dropped the section's substance; keep the original draft instead.
+        if (res.content.trim().length < section.content.trim().length * 0.6) {
+          return [name, section];
+        }
+        return [name, res];
+      } catch {
+        return [name, section];
+      }
+    }),
+  );
+
+  // --- Pass 3: re-ground factual sections that made claims but cited nothing.
+  // One attempt each; keep the rewrite only if it actually gained citations.
+  const grounded = await Promise.all(
+    polished.map(async ([name, section]): Promise<[ReportSectionName, ReportSection]> => {
+      const ungrounded =
+        GROUNDED_SECTIONS.has(name) &&
+        section.content.trim().length > 0 &&
+        section.source_ids.length === 0;
+      if (!ungrounded) return [name, section];
+      try {
+        const prompt = regroundSectionPrompt({
+          companyName: state.companyName,
+          section: name,
+          draftContent: section.content,
+          findings: findingsText.slice(0, 24000),
+          validSourceIds: [...validIds].sort().join(", ") || "(none)",
+          date,
+        });
         const res = (await reviewer.invoke([new HumanMessage(prompt)])) as ReportSection;
-        return [name, filterSourceIds(res, validIds)];
+        const fixed = filterSourceIds(res, validIds);
+        return fixed.source_ids.length > 0 ? [name, fixed] : [name, section];
       } catch {
         return [name, section];
       }
@@ -91,7 +142,7 @@ export async function finalReportNode(state: Graph2State): Promise<Partial<Graph
   );
 
   const report = {
-    ...(Object.fromEntries(polished) as Record<ReportSectionName, ReportSection>),
+    ...(Object.fromEntries(grounded) as Record<ReportSectionName, ReportSection>),
     sources,
   } as ReportContent;
   return { report };

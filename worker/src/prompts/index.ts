@@ -117,6 +117,7 @@ Sequential numbered list with NO gaps:
 [1] Title — URL
 
 ## Rules
+- Start your output directly with the \`### Key Findings\` heading. No preamble, no "Below I have…" intro, no description of what you did or how you organised it.
 - Number sources sequentially from 1, no gaps. Every claim has a citation. Every source found appears in the list.
 - Do NOT paraphrase into vagueness — keep specifics. Do NOT invent information. Length is fine — completeness beats brevity.`;
 }
@@ -162,6 +163,7 @@ For each section:
 - \`source_ids\`: list every source ID actually cited in this section's content.
 
 ## Rules
+- Write about ${args.companyName} itself — its business, products, customers, and signals. NEVER describe the research process, the findings corpus, or the source list. Banned phrasings include "compiled findings", "cleaned findings", "initial extraction", "source list", "field notes", and "found in the (site) assets". State each fact directly and cite it, e.g. "Zylabs positions itself as 'Deal engineering for B2B sales teams' [src_xxxxxxxx]" — not "the findings describe Zylabs' positioning".
 - Every factual claim is grounded in a finding above. Do NOT invent facts.
 - If a section has insufficient evidence, write 1-2 honest sentences and surface the gap; if essentially no evidence, fold it into "unknowns".
 - "discovery_questions": 5-8 specific questions a salesperson should ask, each referencing a real signal.
@@ -198,5 +200,38 @@ Produce the FINAL version of this section. You must:
 1. Keep every grounded claim from the draft. Do not invent new facts.
 2. Tighten prose — kill filler, fix transitions, remove self-referential language.
 3. Ensure inline citations use \`[src_xxxxxxxx]\` format and only reference IDs from the available list. Drop any citation whose ID isn't in the list.
-4. Return \`content\` (polished section text) and \`source_ids\` (IDs actually cited).`;
+4. Return \`content\` (the polished section text itself) and \`source_ids\` (IDs actually cited).
+
+\`content\` is the section's prose about ${args.companyName} and nothing else. NEVER restate these instructions or describe the task — do not output text like "Polish the ${args.section} section", "tighten prose", or "retain grounded claims". If the draft is already good, return it essentially unchanged.`;
+}
+
+export function regroundSectionPrompt(args: {
+  companyName: string;
+  section: string;
+  draftContent: string;
+  findings: string;
+  validSourceIds: string;
+  date: string;
+}): string {
+  return `You are re-grounding one section of a company-research brief on ${args.companyName}. The previous draft made claims but cited NO sources.
+
+Section: **${args.section}**
+
+<previous_draft>
+${args.draftContent}
+</previous_draft>
+
+<findings>
+${args.findings}
+</findings>
+
+Available source IDs: ${args.validSourceIds}
+
+Today's date is ${args.date}.
+
+Re-write this section so every factual claim cites a real source ID (\`[src_xxxxxxxx]\`) from the available list. Rules:
+1. Use ONLY IDs from the available list. Do NOT invent IDs or facts.
+2. If the findings support the claims, cite them. If they genuinely do NOT, state the gap honestly in 1-2 sentences instead of padding.
+3. Write about ${args.companyName} directly — no descriptions of the research process or the findings corpus.
+4. Return \`content\` and \`source_ids\` (every ID actually cited).`;
 }
