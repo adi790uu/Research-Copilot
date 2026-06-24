@@ -52,14 +52,14 @@ function CollapsedRail({ onExpand }: { onExpand: () => void }) {
     <aside className="hidden md:flex md:flex-col md:items-center md:h-full md:overflow-hidden bg-bg-elev/50 py-4 gap-4">
       <Link
         to="/"
-        aria-label="Research Copilot — home"
+        aria-label="Pith — home"
         className="inline-flex items-center justify-center w-7 h-7 rounded-sm hover:bg-bg/60 transition-colors"
       >
         <span
           className="font-display italic text-xl text-ink leading-none"
           style={{ fontVariationSettings: '"opsz" 144, "SOFT" 80, "WONK" 1' }}
         >
-          R
+          P
         </span>
       </Link>
       <button
