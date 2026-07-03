@@ -11,7 +11,6 @@ import type {
   FollowupMessage,
   ResearchJob,
   ResearchJobEvent,
-  ResearchPlan,
   ResearchTask,
   ResearcherResult,
   User,
@@ -100,12 +99,9 @@ interface ApiClient {
       payload: ChatTurnPayload,
       signal?: AbortSignal
     ) => Promise<Response>;
-    /** Approve (and optionally edit) the plan, creating + triggering the
-     * phase-2 job. Returns the new job id to start polling. */
-    approvePlan: (
-      id: string,
-      plan?: ResearchPlan
-    ) => Promise<{ job_id: string }>;
+    /** Approve the plan, creating + triggering the phase-2 job. Returns the
+     * new job id to start polling. */
+    approvePlan: (id: string) => Promise<{ job_id: string }>;
     /** Most-recent job for this brief (404 if none). */
     latestJob: (id: string) => Promise<ResearchJob>;
     listJobs: (id: string) => Promise<ResearchJob[]>;
@@ -168,10 +164,9 @@ function buildClient(fetcher: Fetcher, getToken: TokenSource): ApiClient {
           signal,
         });
       },
-      approvePlan: (id, plan) =>
+      approvePlan: (id) =>
         fetcher<{ job_id: string }>(`/briefs/${id}/plan/approve`, {
           method: "POST",
-          body: JSON.stringify(plan ? { plan } : {}),
         }),
       latestJob: (id) => fetcher<ResearchJob>(`/briefs/${id}/job`),
       listJobs: (id) => fetcher<ResearchJob[]>(`/briefs/${id}/jobs`),

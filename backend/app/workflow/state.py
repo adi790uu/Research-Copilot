@@ -2,14 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Literal
-
 from langgraph.graph import MessagesState
 from pydantic import BaseModel, Field
-
-SourceStrategy = Literal["company_site_first", "external_first", "both_parallel"]
-ToolsRouting = Literal["company_site", "web", "both"]
-Priority = Literal["depth", "breadth"]
 
 
 # ----- Structured outputs ------------------------------------------------
@@ -43,29 +37,25 @@ class ResearchBrief(BaseModel):
         default_factory=list,
         description="Only constraints the user explicitly stated.",
     )
-    source_strategy: SourceStrategy = Field(
-        description="company_site_first (default), external_first, or both_parallel."
-    )
-
-
-class ResearchSubtopic(BaseModel):
-    title: str = Field(description="Short name for this subtopic.")
-    description: str = Field(description="1-2 sentences on what to investigate.")
-    tools: ToolsRouting = Field(
-        description="company_site, web, or both.",
-    )
-    priority: Priority = Field(description="depth or breadth.")
 
 
 class ResearchPlan(BaseModel):
-    user_message: str = Field(
-        description="2-3 sentence first-person note to the user about the planned research."
+    """A research mandate, not a fixed execution list.
+
+    The supervisor owns dynamic decomposition; this hands it a goal, guidance,
+    and seed angles it can decompose into and extend as findings emerge.
+    """
+
+    research_goal: str = Field(
+        description="Comprehensive statement of what this research will deliver. Shown to the user for approval."
     )
-    strategy_summary: str = Field(description="1-2 sentence internal note on overall strategy.")
-    subtopics: list[ResearchSubtopic] = Field(
-        description="Ordered list; each becomes one parallel researcher.",
+    guidance: str = Field(
+        description="Strategy, priorities, and boundaries for the research supervisor."
+    )
+    coverage_angles: list[str] = Field(
+        description="Seed angles the supervisor can decompose into. Non-binding starting points, not a rigid list.",
         min_length=1,
-        max_length=8,
+        max_length=10,
     )
 
 
@@ -92,10 +82,6 @@ __all__ = [
     "AgentState",
     "ClarificationQuestion",
     "ClarifyWithUser",
-    "Priority",
     "ResearchBrief",
     "ResearchPlan",
-    "ResearchSubtopic",
-    "SourceStrategy",
-    "ToolsRouting",
 ]

@@ -35,6 +35,8 @@ Ask when the objective is open-ended enough that a sales rep, an investor, and a
 
 If none of those hold and the objective already names a concrete angle (a specific product, a specific market, a clear use case), set need_clarification = false.
 
+**Bias toward proceeding.** When in doubt, do NOT ask. Default to the most likely interpretation for a sales-intelligence user (audience = sales outreach unless stated otherwise) and let the brief record the assumption. Only ask when proceeding on the wrong interpretation would waste the entire research run.
+
 ## When NOT to ask
 
 - **HARD RULE — single-round limit.** If <messages> already contains an AI message with `"type":"clarification"` AND any subsequent human message (typically prefixed `Clarification answer:`), set `need_clarification = false` immediately. One round only. Even if the answers feel partial, proceed — the planner can work with imperfect scoping.
@@ -42,10 +44,16 @@ If none of those hold and the objective already names a concrete angle (a specif
 
 ## How to ask
 
-- 1-2 questions, 3 only if truly unavoidable.
+- 1-2 questions. Never more.
 - Each question targets ONE specific ambiguity.
-- Always provide 2-4 short, tappable suggested_answers per question. Make them concrete and mutually exclusive where possible (e.g. for audience: ["Sales outreach", "Partnership eval", "Competitive intel", "Investment due-diligence"]).
-- Keep questions short — one sentence. The user is glancing, not reading an essay.
+- Always provide 2-4 short, tappable suggested_answers per question. Make them concrete and mutually exclusive where possible (e.g. for audience: ["Sales outreach", "Partnership eval", "Competitive intel", "Investment due-diligence"]). Include a general-purpose default the user can tap to skip (e.g. "Just a general profile").
+- Keep questions short, one sentence. The user is glancing, not reading an essay.
+
+## Examples
+
+Objective: "Tell me everything about Stripe." -> need_clarification = true. Unbounded scope with no audience. Ask: "What's the main goal for this Stripe research?" with suggested_answers ["Sales outreach", "Competitive intel", "Investment due-diligence", "Just a general profile"].
+
+Objective: "Draft cold-outreach angles for Stripe's payments product targeting their Head of RevOps." -> need_clarification = false. Audience, focus, and use case are all concrete.
 """
 
 
@@ -71,19 +79,12 @@ Produce a structured brief:
 **key_entities**: List the people, products, competitors, technologies, or named accounts the research must cover. The target company is always implicit — list anything ELSE.
 
 **constraints**: Only list boundaries the user explicitly stated (geography, time period, segment, etc.). If they didn't constrain it, leave it out.
-
-**source_strategy**: Pick one based on the objective:
-- "company_site_first" — start with the company's own website, supplement with external news/stats.
-- "external_first" — start with external sources (news, reviews, press) and use the company site for confirmation only.
-- "both_parallel" — both sources are equally relevant from the start.
-
-Default to "company_site_first" unless the objective is explicitly about how the company is perceived externally.
 """
 
 
 # ----- Research plan ------------------------------------------------------
 
-research_plan_prompt = """You are a research strategist. Given the brief below, produce a concrete plan that a team of parallel researchers will execute against the target company.
+research_plan_prompt = """You are a research strategist. Given the brief below, produce a research mandate for a research supervisor. You do NOT decompose the work into a rigid task list — the supervisor decomposes dynamically as findings emerge. Your job is to set the goal, the guidance, and the angles worth covering.
 
 ## Inputs
 
@@ -98,27 +99,11 @@ The user's request (target company name + website, objective) and any clarificat
 
 Today's date: {date}
 
-## How to decide subtopic count
+## Output
 
-Most company-research runs need 4-6 subtopics. Hard cap: 8.
+**research_goal**: A comprehensive, confident statement of what this research will deliver on this specific company, in service of the user's objective. This is shown to the user for approval, so name the real substance (the actual company, the actual angles), not "I'll look into your query". 3-5 sentences. No filler.
 
-- Each subtopic is one independent thread of investigation. Pick angles the objective actually needs — coverage of the company, its products, its customers, its market signals, its risks, and any specific entities the user named.
-- Two subtopics must not return the same findings — keep them non-overlapping.
-- A subtopic must be independently researchable. No subtopic waits on another's result.
+**guidance**: Direction for the supervisor: what to prioritise, what "done" looks like, where to go deep vs stay light, and any boundaries (geography, time period, segment) the user set. Note that the supervisor decides tool routing (company site vs external web) per task, so guide it on emphasis rather than dictating tools.
 
-## Tool assignment per subtopic
-
-Set `tools` based on what the subtopic needs:
-- "company_site" — best answered by the company's own pages (about, products, pricing, blog).
-- "web" — needs external sources (news, funding, reviews, competitor mentions).
-- "both" — benefits from both perspectives.
-
-## Priority per subtopic
-
-- "depth" — the angle is clear; go straight to specific queries.
-- "breadth" — survey first, then refine.
-
-## User message
-
-A confident 2-3 sentence first-person note to the user, naming the actual angles you will research on this specific company (not "I'll look into your query"). No filler.
+**coverage_angles**: 4-8 angles worth investigating to satisfy the goal (e.g. "products and pricing", "recent funding and hiring signals", "competitive positioning", named entities the user called out). These are non-binding seeds — the supervisor may merge, split, drop, or add angles as it learns. Keep them distinct and each independently researchable.
 """

@@ -25,7 +25,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from app.core.config import get_settings
-from app.core.errors import AppError, NotFoundError
+from app.core.errors import AppError
 from app.core.logging import get_logger
 from app.domain.events import (
     ClarificationRequested,
@@ -195,26 +195,6 @@ class WorkflowService:
 
         await self._set_status(brief_id=brief_id, user_id=user_id, status="running")
         return job_id
-
-    # ----- plan editing (no run) -------------------------------------------
-
-    async def save_plan_edits(
-        self, *, brief_id: str, user_id: str, plan: dict[str, Any]
-    ) -> dict[str, Any]:
-        sessionmaker = get_sessionmaker()
-        async with sessionmaker() as db:
-            row = await BriefRepository(db, user_id).get(brief_id)
-            if row is None:
-                raise NotFoundError(f"Brief {brief_id} not found")
-            if row.status != "awaiting_plan_approval":
-                raise AppError(
-                    f"Plan can only be edited while awaiting approval; "
-                    f"current status: {row.status}"
-                )
-
-        graph, config = self._build(brief_id=brief_id)
-        await graph.aupdate_state(config, {"research_plan": plan})
-        return plan
 
 
 # ---------- phase-1 streaming generator -------------------------------------

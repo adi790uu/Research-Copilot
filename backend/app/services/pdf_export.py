@@ -1,7 +1,7 @@
 """Report → HTML → PDF rendering.
 
-Renders a structured `ReportContent` (8 sections + sources) as a
-print-styled, self-contained HTML document and then asks WeasyPrint to
+Renders a `ReportContent` (summary + dynamically-chosen sections + sources)
+as a print-styled, self-contained HTML document and then asks WeasyPrint to
 hand it back as PDF bytes.
 
 WeasyPrint is loaded lazily so a missing Pango/Cairo on macOS doesn't take
@@ -50,21 +50,6 @@ class PDFRenderError(RuntimeError):
     """Raised when WeasyPrint or its native deps can't render."""
 
 
-# (attr, ordinal, title, kind). `kind` controls the body render:
-#   - "prose": paragraphs.
-#   - "list":  numbered list of questions (with `?` boundary fallback).
-#   - "callout": prose inside a bordered callout box.
-_SECTION_LABELS: list[tuple[str, str, str, str]] = [
-    ("company_overview", "01", "Company overview", "prose"),
-    ("products_and_services", "02", "Products & services", "prose"),
-    ("target_customers", "03", "Target customers", "prose"),
-    ("business_signals", "04", "Business signals", "prose"),
-    ("risks_and_challenges", "05", "Risks & challenges", "prose"),
-    ("discovery_questions", "06", "Discovery questions", "list"),
-    ("outreach_strategy", "07", "Outreach strategy", "prose"),
-    ("unknowns", "08", "Unknowns", "callout"),
-]
-
 _CITATION_RE = re.compile(r"\[([a-zA-Z0-9_,\s-]+)\]")
 
 
@@ -76,15 +61,19 @@ def render_report_html(
 ) -> str:
     """Produce a print-styled, self-contained HTML document for the report."""
     sources = report.content.sources
+    sections = report.content.sections
     src_index: dict[str, int] = {s.id: i + 1 for i, s in enumerate(sources)}
 
     body_parts: list[str] = [
-        _cover_html(company_name, objective, report.created_at, len(sources)),
+        _cover_html(
+            company_name, objective, report.created_at, len(sources), len(sections)
+        ),
     ]
-    for attr, ordinal, title, kind in _SECTION_LABELS:
-        section: ReportSection = getattr(report.content, attr)
-        body_parts.append(_section_html(ordinal, title, section, kind, src_index))
-    body_parts.append(_sources_html(sources))
+    if report.content.summary.strip():
+        body_parts.append(_summary_html(report.content.summary, src_index))
+    for i, section in enumerate(sections, start=1):
+        body_parts.append(_section_html(f"{i:02d}", section, src_index))
+    body_parts.append(_sources_html(sources, f"{len(sections) + 1:02d}"))
 
     return _DOC_TEMPLATE.format(
         title=escape(f"Brief — {company_name}"),
@@ -125,7 +114,11 @@ def report_to_pdf(
 
 
 def _cover_html(
-    company_name: str, objective: str, created_at: datetime, source_count: int
+    company_name: str,
+    objective: str,
+    created_at: datetime,
+    source_count: int,
+    section_count: int,
 ) -> str:
     return f"""
 <section class="cover">
@@ -134,32 +127,30 @@ def _cover_html(
   <p class="objective">{escape(objective)}</p>
   <p class="meta">
     Prepared {escape(created_at.strftime("%B %d, %Y"))}
-    &nbsp;·&nbsp; 8 sections
+    &nbsp;·&nbsp; {section_count} sections
     &nbsp;·&nbsp; {source_count} sources
   </p>
 </section>
 """
 
 
+def _summary_html(summary: str, src_index: dict[str, int]) -> str:
+    return f"""
+<section class="rsec">
+  <h2><span class="ord">00</span><span class="t">Summary</span></h2>
+  <div class="callout">{_render_paragraphs(summary.strip(), src_index)}</div>
+</section>
+"""
+
+
 def _section_html(
     ordinal: str,
-    title: str,
     section: ReportSection,
-    kind: str,
     src_index: dict[str, int],
 ) -> str:
     body = (section.content or "").strip()
     if not body:
         body_html = '<p class="empty">No content surfaced for this section.</p>'
-    elif kind == "list":
-        items = _split_questions(body)
-        if len(items) > 1:
-            lis = "\n".join(f"<li>{_render_text(q, src_index)}</li>" for q in items)
-            body_html = f'<ol class="qlist">{lis}</ol>'
-        else:
-            body_html = _render_paragraphs(body, src_index)
-    elif kind == "callout":
-        body_html = f'<div class="callout">{_render_paragraphs(body, src_index)}</div>'
     else:
         body_html = _render_paragraphs(body, src_index)
 
@@ -175,18 +166,18 @@ def _section_html(
 
     return f"""
 <section class="rsec">
-  <h2><span class="ord">{ordinal}</span><span class="t">{escape(title)}</span></h2>
+  <h2><span class="ord">{ordinal}</span><span class="t">{escape(section.heading)}</span></h2>
   {body_html}
   {cited_strip}
 </section>
 """
 
 
-def _sources_html(sources: list[Source]) -> str:
+def _sources_html(sources: list[Source], ordinal: str) -> str:
     if not sources:
-        return """
+        return f"""
 <section class="sources">
-  <h2><span class="ord">09</span><span class="t">Sources</span></h2>
+  <h2><span class="ord">{ordinal}</span><span class="t">Sources</span></h2>
   <p class="empty">No sources were retained.</p>
 </section>
 """
@@ -210,7 +201,7 @@ def _sources_html(sources: list[Source]) -> str:
         )
     return f"""
 <section class="sources">
-  <h2><span class="ord">09</span><span class="t">Sources</span></h2>
+  <h2><span class="ord">{ordinal}</span><span class="t">Sources</span></h2>
   <ol class="src-list">{''.join(items)}</ol>
 </section>
 """
@@ -245,18 +236,6 @@ def _render_text(text: str, src_index: dict[str, int]) -> str:
         last = end
     out.append(escape(text[last:]))
     return "".join(out).replace("\n", "<br>")
-
-
-def _split_questions(text: str) -> list[str]:
-    lines = [
-        re.sub(r"^\s*(?:\d+[.)]|[-•*])\s*", "", line).strip()
-        for line in re.split(r"\n+", text)
-    ]
-    lines = [line for line in lines if line]
-    if len(lines) > 1:
-        return lines
-    parts = [p.strip() for p in text.split("?") if p.strip()]
-    return [p if p.endswith("?") else f"{p}?" for p in parts]
 
 
 def _pretty_host(url: str) -> str:

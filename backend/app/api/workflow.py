@@ -141,17 +141,9 @@ def _sse_format(event: WorkflowEvent) -> bytes:
 # ─── Plan approval → trigger phase-2 worker ─────────────────────────────────
 
 
-class PlanApproval(BaseModel):
-    """Approve (and optionally edit) the plan, then launch phase 2."""
-
-    # When provided, the edited plan is saved to the checkpoint before launch.
-    plan: dict | None = None
-
-
 @router.post("/plan/approve")
 async def approve_plan(
     brief_id: str,
-    payload: PlanApproval,
     request: Request,
     user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
@@ -164,10 +156,7 @@ async def approve_plan(
     if owned is None:
         raise NotFoundError(f"Brief {brief_id} not found")
 
-    svc = _service(request)
-    if payload.plan is not None:
-        await svc.save_plan_edits(brief_id=brief_id, user_id=user.id, plan=payload.plan)
-    job_id = await svc.approve_plan(brief_id=brief_id, user_id=user.id)
+    job_id = await _service(request).approve_plan(brief_id=brief_id, user_id=user.id)
     return {"job_id": job_id}
 
 
@@ -335,7 +324,7 @@ async def get_job_report_pdf(
 
     # research_jobs.final_report is the JSON-encoded ReportContent that the
     # worker wrote. Parse it back into a typed Report so pdf_export can render
-    # the structured 8-section template.
+    # the dynamically-structured report template.
     try:
         content_dict = (
             raw_report if isinstance(raw_report, dict) else _json.loads(raw_report)

@@ -76,20 +76,12 @@ export interface ClarificationAnswer {
   answer: string;
 }
 
-export type ResearchSubtopicTools = "company_site" | "web" | "both";
-export type ResearchSubtopicPriority = "depth" | "breadth";
-
-export interface ResearchSubtopic {
-  title: string;
-  description: string;
-  tools: ResearchSubtopicTools;
-  priority: ResearchSubtopicPriority;
-}
-
+/** A research mandate (mirrors backend `ResearchPlan`). The supervisor owns
+ * dynamic decomposition; coverage_angles are non-binding seeds. */
 export interface ResearchPlan {
-  user_message: string;
-  strategy_summary: string;
-  subtopics: ResearchSubtopic[];
+  research_goal: string;
+  guidance: string;
+  coverage_angles: string[];
 }
 
 interface BaseEvent {
@@ -153,40 +145,26 @@ export interface Source {
   title: string;
   snippet: string | null;
   /** Optional section hint so the Sources tab can group by subtopic. */
-  section?: ResearchReportSection | null;
+  section?: string | null;
   /** Tool channel that found this source. Drives the Sources-tab grouping. */
   type?: SourceType | null;
 }
 
 // ---------------------------------------------------------------------------
-// Structured 8-section report (mirrors backend `app/domain/report.py`).
-// `ResearchJob.final_report` carries the JSON-encoded form of this.
+// Dynamically-structured report (mirrors backend `app/domain/report.py`).
+// The writer chooses the sections; `ResearchJob.final_report` carries the
+// JSON-encoded form of this.
 // ---------------------------------------------------------------------------
 
-export type ResearchReportSection =
-  | "company_overview"
-  | "products_and_services"
-  | "target_customers"
-  | "business_signals"
-  | "risks_and_challenges"
-  | "discovery_questions"
-  | "outreach_strategy"
-  | "unknowns";
-
 export interface ReportSection {
+  heading: string;
   content: string;
   source_ids: string[];
 }
 
 export interface ReportContent {
-  company_overview: ReportSection;
-  products_and_services: ReportSection;
-  target_customers: ReportSection;
-  business_signals: ReportSection;
-  risks_and_challenges: ReportSection;
-  discovery_questions: ReportSection;
-  outreach_strategy: ReportSection;
-  unknowns: ReportSection;
+  summary: string;
+  sections: ReportSection[];
   sources: Source[];
 }
 

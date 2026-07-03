@@ -10,31 +10,24 @@ const payloadSchema = z.object({
   researchPlan: z.string().min(1),
 });
 
-const subtopicSchema = z.object({
-  title: z.string(),
-  description: z.string().default(""),
-  tools: z.string().default("both"),
-  priority: z.string().default("breadth"),
-});
 const planSchema = z.object({
-  strategy_summary: z.string().default(""),
-  subtopics: z.array(subtopicSchema).default([]),
+  research_goal: z.string().default(""),
+  guidance: z.string().default(""),
+  coverage_angles: z.array(z.string()).default([]),
 });
 
-/** Turn the approved plan + objective into the brief the supervisor consumes. */
+/** Turn the approved mandate + objective into the brief the supervisor consumes. */
 function renderBrief(researchPlan: string, objective: string): string {
   const parsed = planSchema.safeParse(JSON.parse(researchPlan) as unknown);
   if (!parsed.success)
     return `Objective: ${objective}\n\nPlan:\n${researchPlan}`;
-  const { strategy_summary, subtopics } = parsed.data;
-  const lines = subtopics.map(
-    (s, i) =>
-      `${i + 1}. ${s.title} [${s.tools}, ${s.priority}]: ${s.description}`,
-  );
+  const { research_goal, guidance, coverage_angles } = parsed.data;
+  const angles = coverage_angles.map((a, i) => `${i + 1}. ${a}`);
   return [
     `Objective: ${objective}`,
-    strategy_summary ? `\nStrategy: ${strategy_summary}` : "",
-    subtopics.length ? `\nSubtopics to research:\n${lines.join("\n")}` : "",
+    research_goal ? `\nResearch goal: ${research_goal}` : "",
+    guidance ? `\nGuidance: ${guidance}` : "",
+    coverage_angles.length ? `\nCoverage angles (seeds to decompose):\n${angles.join("\n")}` : "",
   ].join("\n");
 }
 

@@ -222,38 +222,6 @@ function findLast<T>(arr: T[], pred: (x: T) => boolean): T | undefined {
   return undefined;
 }
 
-/**
- * Split a plan narrative like "I'll do X by (1) … , (2) … , and (3) … . Each
- * angle will …" into an intro, numbered steps, and a trailing outro sentence.
- * Returns null when the text isn't in that shape so the caller falls back to a
- * plain paragraph.
- */
-function parsePlan(
-  text: string
-): { intro: string; steps: string[]; outro: string } | null {
-  if (!text || !/\(\s*1\s*\)/.test(text)) return null;
-
-  const parts = text.split(/\(\s*\d+\s*\)\s*/); // [intro, seg1, seg2, …]
-  const intro = parts[0]?.trim().replace(/[:,]?\s*$/, "") ?? "";
-  const rawSteps = parts.slice(1).map((s) => s.trim()).filter(Boolean);
-  if (rawSteps.length === 0) return null;
-
-  // The last step often carries a trailing summary sentence ("Each angle …").
-  // Peel it off so it reads as an outro rather than part of step N.
-  let outro = "";
-  const last = rawSteps[rawSteps.length - 1];
-  const splitLast = last.match(/^(.*?[.;])\s+([A-Z].*)$/s);
-  if (splitLast) {
-    rawSteps[rawSteps.length - 1] = splitLast[1];
-    outro = splitLast[2];
-  }
-
-  const steps = rawSteps.map((s) =>
-    s.replace(/^(?:and\s+)?,?\s*/i, "").replace(/[,;]\s*$/, "").trim()
-  );
-
-  return { intro, steps, outro };
-}
 
 // ─── Thinking bubble ────────────────────────────────────────────────────────
 
@@ -482,8 +450,7 @@ function PlanCard({
   approveError: string | null;
   onApprove: () => void;
 }) {
-  const parsed = parsePlan(plan.user_message || plan.strategy_summary);
-  const steps = parsed?.steps ?? [];
+  const steps = plan.coverage_angles ?? [];
   // The plan speaks in Newsreader — a calm editorial text serif, distinct from
   // the Fraunces display + Geist sans used everywhere else.
   const planFont = '"Newsreader", Georgia, serif';
@@ -502,13 +469,13 @@ function PlanCard({
             </p>
             {steps.length > 0 ? (
               <span className="font-mono text-[0.625rem] uppercase tracking-eyebrow text-ink-faint">
-                {String(steps.length).padStart(2, "0")} steps
+                {String(steps.length).padStart(2, "0")} angles
               </span>
             ) : null}
           </div>
 
-          {/* Lead — Newsreader, confident editorial hook */}
-          {parsed?.intro ? (
+          {/* Lead — the research goal, confident editorial hook */}
+          {plan.research_goal ? (
             <p
               className="mt-4 max-w-[31rem] text-[1.4rem] leading-[1.4] text-ink"
               style={{
@@ -516,11 +483,11 @@ function PlanCard({
                 fontVariationSettings: '"opsz" 72, "wght" 440',
               }}
             >
-              {parsed.intro}
+              {plan.research_goal}
             </p>
           ) : null}
 
-          {/* Steps — right-aligned figures, generous rhythm */}
+          {/* Coverage angles — right-aligned figures, generous rhythm */}
           {steps.length > 0 ? (
             <ol className="mt-7 space-y-4">
               {steps.map((step, i) => (
@@ -546,7 +513,7 @@ function PlanCard({
                 </li>
               ))}
             </ol>
-          ) : (
+          ) : !plan.research_goal ? (
             <p
               className="mt-4 whitespace-pre-wrap text-[1.05rem] leading-[1.8] text-ink-soft"
               style={{
@@ -554,12 +521,12 @@ function PlanCard({
                 fontVariationSettings: '"opsz" 18, "wght" 400',
               }}
             >
-              {plan.user_message || plan.strategy_summary || "No plan details."}
+              No plan details.
             </p>
-          )}
+          ) : null}
 
-          {/* Outro */}
-          {parsed?.outro ? (
+          {/* Guidance — italic editorial note */}
+          {plan.guidance ? (
             <p
               className="mt-6 text-[0.98rem] leading-relaxed text-ink-faint"
               style={{
@@ -568,7 +535,7 @@ function PlanCard({
                 fontVariationSettings: '"opsz" 36, "wght" 400',
               }}
             >
-              {parsed.outro}
+              {plan.guidance}
             </p>
           ) : null}
 

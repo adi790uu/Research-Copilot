@@ -30,7 +30,7 @@ export const researchJobs = pgTable("research_jobs", {
   userId: text("user_id").notNull(),
   status: text("status").notNull().default("pending"),
   researchPlan: text("research_plan"),
-  // final_report holds the JSON-encoded ReportContent (8 sections + sources).
+  // final_report holds the JSON-encoded ReportContent (summary + sections + sources).
   finalReport: text("final_report"),
   sources: json("sources").$type<Source[]>(),
   reportPdfKey: text("report_pdf_key"),

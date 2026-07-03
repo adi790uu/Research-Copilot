@@ -1,10 +1,3 @@
-"""Research plan node.
-
-Produces an ordered list of subtopics, each with a tool routing hint
-(company_site / web / both). The supervisor turns each subtopic into a
-ConductResearch dispatch.
-"""
-
 from __future__ import annotations
 
 from typing import Any, cast
@@ -34,5 +27,5 @@ async def create_research_plan(state: AgentState, config: RunnableConfig) -> dic
         # Serialise to a plain dict so the langgraph checkpointer doesn't have
         # to deserialise an app-defined Pydantic type on resume.
         "research_plan": plan.model_dump(mode="json"),
-        "messages": [AIMessage(content=plan.user_message)],
+        "messages": [AIMessage(content=plan.research_goal)],
     }

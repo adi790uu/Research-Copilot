@@ -1,11 +1,3 @@
-"""Clarification gate node.
-
-Decides whether the user's objective is too ambiguous to research without
-follow-up. When clarification is needed, the graph terminates at END with a
-JSON payload on the last AIMessage; the service layer translates that into a
-ClarificationRequested SSE event.
-"""
-
 from __future__ import annotations
 
 import json
@@ -25,6 +17,16 @@ from app.workflow.state import AgentState, ClarifyWithUser
 logger = logging.getLogger(__name__)
 
 
+def _already_clarified(messages: list) -> bool:
+    seen = False
+    for m in messages:
+        if isinstance(m, AIMessage) and '"type": "clarification"' in str(m.content):
+            seen = True
+        elif seen and isinstance(m, HumanMessage):
+            return True
+    return False
+
+
 async def clarify_with_user(state: AgentState, config: RunnableConfig) -> Command:
     configurable = (config or {}).get("configurable", {}) or {}
     allow_clarification = configurable.get(
@@ -32,6 +34,10 @@ async def clarify_with_user(state: AgentState, config: RunnableConfig) -> Comman
     )
 
     if not allow_clarification:
+        return Command(goto="write_research_brief")
+
+    # Hard single-round limit, enforced in code rather than left to the model.
+    if _already_clarified(state.get("messages", [])):
         return Command(goto="write_research_brief")
 
     model = _create_model(temperature=0.0).with_structured_output(ClarifyWithUser).with_retry(

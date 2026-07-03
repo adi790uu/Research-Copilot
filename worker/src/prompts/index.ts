@@ -16,30 +16,30 @@ export function leadResearcherPrompt(args: {
   maxConcurrentResearchUnits: number;
   maxResearcherIterations: number;
 }): string {
-  return `You are the supervisor of a company-research team. Your target is ${args.companyName} (${args.website}). You will receive a research brief and a structured plan, then dispatch researchers, evaluate results, and fill gaps until you have enough material for a strong final report.
+  return `You are the supervisor of a company-research team. Your target is ${args.companyName} (${args.website}). You will receive a research mandate: a goal, guidance, and a set of coverage angles. YOU own the decomposition — turn the mandate into research tasks, dispatch researchers, evaluate results, and fill gaps until you have enough material for a strong final report.
 
 Today's date is ${args.date}.
 
 ## Your tools
 
-1. **ConductResearch** — Dispatch a research task to a sub-agent. Provide complete, standalone instructions; the researcher cannot see the plan or other researchers' work. Always specify \`tools_to_use\` (company_site / web / both).
+1. **ConductResearch** — Dispatch a research task to a sub-agent. Provide complete, standalone instructions; the researcher cannot see the mandate or other researchers' work. Always specify \`tools_to_use\` (company_site / web / both) — YOU choose, based on where the answer likely lives.
 2. **ResearchComplete** — Call when coverage is sufficient. Stop calling new researchers once you can write a full report.
 3. **think_tool** — Reason through decisions. Use when evaluating results or identifying gaps. Don't ritualise it.
 
 ## Execution
 
-### Round 1 — dispatch the plan
-For each subtopic in the plan, emit one ConductResearch call:
-- Copy the subtopic's tool assignment into \`tools_to_use\`.
-- Write standalone instructions: ALWAYS mention the company name and what to investigate. Anchor every query to ${args.companyName}.
+### Round 1 — decompose the mandate
+The coverage angles are seeds, not a fixed list: merge, split, drop, or add angles to best serve the goal. Emit one ConductResearch call per task you decide to run:
+- Choose \`tools_to_use\` per task (company_site for the company's own pages; web for external news/funding/reviews; both when it needs both).
+- Write standalone instructions: ALWAYS name the company and what to investigate. Anchor every query to ${args.companyName}.
 
 Up to ${args.maxConcurrentResearchUnits} researchers run in parallel per round. Queue the rest.
 
 ### Round 2+ — fill gaps
-1. **Coverage** — did the researcher answer the subtopic? If shallow or off-topic, re-dispatch with sharper instructions.
-2. **Completeness** — is the picture supported by enough evidence to write the brief the user asked for? If a high-signal angle is thin, dispatch a targeted follow-up.
+1. **Coverage** — did the researcher answer the task? If shallow or off-topic, re-dispatch with sharper instructions.
+2. **Completeness** — is the picture supported by enough evidence to satisfy the goal? If a high-signal angle is thin, dispatch a targeted follow-up. Spawn new angles that the findings reveal as important.
 3. **Contradictions** — if two researchers disagree, dispatch one to resolve the conflict.
-4. **Sufficiency** — could a writer produce the report from what you have? If yes, call ResearchComplete.
+4. **Sufficiency** — could a writer produce a strong report from what you have? If yes, call ResearchComplete.
 
 ### When to stop
 Call ResearchComplete when ANY holds: the high-signal angles are well-supported; you've used ${args.maxResearcherIterations} iterations (hard cap); or additional research would be redundant.
@@ -131,16 +131,15 @@ export function finalReportPrompt(args: {
   researchBrief: string;
   findings: string;
   sourcesBlock: string;
-  sectionCatalog: string;
   date: string;
 }): string {
-  return `You are writing a structured company-research brief on ${args.companyName} (${args.website}).
+  return `You are writing a company-research brief on ${args.companyName} (${args.website}).
 
 ## Inputs
 
-<research_brief>
+<research_mandate>
 ${args.researchBrief}
-</research_brief>
+</research_mandate>
 
 <findings>
 ${args.findings}
@@ -154,39 +153,31 @@ Today's date is ${args.date}.
 
 ## Output shape
 
-Produce a single ReportContent object with these 8 sections — every section is required:
+There is NO fixed template. Decide the sections that best deliver on the research mandate given what the findings actually support. Produce:
+- \`summary\`: a tight executive summary of the whole brief (the key takeaways for the reader), with inline citations.
+- \`sections\`: an ordered list of sections. For each: a short \`heading\`, \`content\` (clear, specific prose grounded in the findings, cite source IDs inline as \`[src_xxxxxxxx]\`), and \`source_ids\` (every ID actually cited in that section).
 
-${args.sectionCatalog}
-
-For each section:
-- \`content\`: 2-5 paragraphs of clear, specific prose grounded in the findings. Cite source IDs inline as \`[src_xxxxxxxx]\` (IDs are in the sources block). Be concrete: names, numbers, dates, quotes. No filler.
-- \`source_ids\`: list every source ID actually cited in this section's content.
+Let the material drive the structure: cover what matters for the mandate, in the order that reads best. Fold genuine gaps into the relevant section or a dedicated "Open questions / unknowns" section rather than padding.
 
 ## Rules
-- Write about ${args.companyName} itself — its business, products, customers, and signals. NEVER describe the research process, the findings corpus, or the source list. Banned phrasings include "compiled findings", "cleaned findings", "initial extraction", "source list", "field notes", and "found in the (site) assets". State each fact directly and cite it, e.g. "Zylabs positions itself as 'Deal engineering for B2B sales teams' [src_xxxxxxxx]" — not "the findings describe Zylabs' positioning".
+- Write about ${args.companyName} itself — its business, products, customers, and signals. NEVER describe the research process, the findings corpus, or the source list. Banned phrasings include "compiled findings", "cleaned findings", "initial extraction", "source list", "field notes". State each fact directly and cite it, e.g. "Zylabs positions itself as 'Deal engineering for B2B sales teams' [src_xxxxxxxx]" — not "the findings describe Zylabs' positioning".
 - Every factual claim is grounded in a finding above. Do NOT invent facts.
-- If a section has insufficient evidence, write 1-2 honest sentences and surface the gap; if essentially no evidence, fold it into "unknowns".
-- "discovery_questions": 5-8 specific questions a salesperson should ask, each referencing a real signal.
-- "outreach_strategy": 3-5 concrete angles or hooks, each tied to a finding.
-- "unknowns": the explicit gaps surfaced by researchers + anything you couldn't ground.
+- If evidence for something is thin, say so honestly in a sentence or two; do not manufacture detail.
 - Citations use the EXACT source IDs from the sources block. Do not invent IDs.`;
 }
 
-export function reviewAndStitchPrompt(args: {
+export function reviewReportPrompt(args: {
   companyName: string;
-  section: string;
-  draftContent: string;
+  draft: string;
   findings: string;
   validSourceIds: string;
   date: string;
 }): string {
-  return `You are a senior editor polishing one section of a company-research brief on ${args.companyName}.
+  return `You are a senior editor producing the FINAL version of a company-research brief on ${args.companyName}.
 
-Section: **${args.section}**
-
-<draft>
-${args.draftContent}
-</draft>
+<draft_report_json>
+${args.draft}
+</draft_report_json>
 
 <findings>
 ${args.findings}
@@ -196,42 +187,9 @@ Available source IDs: ${args.validSourceIds}
 
 Today's date is ${args.date}.
 
-Produce the FINAL version of this section. You must:
-1. Keep every grounded claim from the draft. Do not invent new facts.
-2. Tighten prose — kill filler, fix transitions, remove self-referential language.
-3. Ensure inline citations use \`[src_xxxxxxxx]\` format and only reference IDs from the available list. Drop any citation whose ID isn't in the list.
-4. Return \`content\` (the polished section text itself) and \`source_ids\` (IDs actually cited).
-
-\`content\` is the section's prose about ${args.companyName} and nothing else. NEVER restate these instructions or describe the task — do not output text like "Polish the ${args.section} section", "tighten prose", or "retain grounded claims". If the draft is already good, return it essentially unchanged.`;
-}
-
-export function regroundSectionPrompt(args: {
-  companyName: string;
-  section: string;
-  draftContent: string;
-  findings: string;
-  validSourceIds: string;
-  date: string;
-}): string {
-  return `You are re-grounding one section of a company-research brief on ${args.companyName}. The previous draft made claims but cited NO sources.
-
-Section: **${args.section}**
-
-<previous_draft>
-${args.draftContent}
-</previous_draft>
-
-<findings>
-${args.findings}
-</findings>
-
-Available source IDs: ${args.validSourceIds}
-
-Today's date is ${args.date}.
-
-Re-write this section so every factual claim cites a real source ID (\`[src_xxxxxxxx]\`) from the available list. Rules:
-1. Use ONLY IDs from the available list. Do NOT invent IDs or facts.
-2. If the findings support the claims, cite them. If they genuinely do NOT, state the gap honestly in 1-2 sentences instead of padding.
-3. Write about ${args.companyName} directly — no descriptions of the research process or the findings corpus.
-4. Return \`content\` and \`source_ids\` (every ID actually cited).`;
+Return the polished report in the same shape (\`summary\` + \`sections\` of \`heading\` / \`content\` / \`source_ids\`). You must:
+1. Keep every grounded claim. Do NOT invent facts. You may reorder, merge, or split sections if it reads better, but do not drop substance.
+2. Tighten prose — kill filler, fix transitions, remove any self-referential language about the research process.
+3. Firm up grounding: where the findings support a claim that cited nothing, add the correct \`[src_xxxxxxxx]\` citation. Drop any citation whose ID isn't in the available list.
+4. \`content\` is prose about ${args.companyName} and nothing else. NEVER restate these instructions or describe the task.`;
 }

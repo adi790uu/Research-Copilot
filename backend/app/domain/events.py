@@ -53,7 +53,7 @@ class PlanReady(_BaseEvent):
     """Graph 1 finished — the research plan is ready for review.
 
     The SSE stream closes after this event. The frontend lets the user
-    edit/approve the plan, then calls `POST /sessions/{id}/plan/approve`
+    review and approve the plan, then calls `POST /sessions/{id}/plan/approve`
     which creates the job and triggers the worker. `job_id` is therefore
     not known yet at this point (the approve call returns it).
     """

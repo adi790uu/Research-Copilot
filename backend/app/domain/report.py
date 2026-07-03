@@ -25,27 +25,20 @@ class Source(BaseModel):
 
 
 class ReportSection(BaseModel):
-    """One of the 8 fixed sections of the final brief."""
+    """One dynamically-chosen section of the final brief."""
 
+    heading: str
     content: str
     source_ids: list[str] = Field(default_factory=list)
 
 
 class ReportContent(BaseModel):
-    """All sections required by the assignment brief.
+    """The final brief. Sections are chosen by the writer to best satisfy the
+    research goal, not fixed to a template. Order is the render order (PDF /
+    artifact panel)."""
 
-    Order in the file matches the order they render in the PDF / artifact
-    panel.
-    """
-
-    company_overview: ReportSection
-    products_and_services: ReportSection
-    target_customers: ReportSection
-    business_signals: ReportSection
-    risks_and_challenges: ReportSection
-    discovery_questions: ReportSection
-    outreach_strategy: ReportSection
-    unknowns: ReportSection
+    summary: str = ""
+    sections: list[ReportSection] = Field(default_factory=list)
     sources: list[Source] = Field(default_factory=list)
 
 

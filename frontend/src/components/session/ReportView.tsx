@@ -4,7 +4,6 @@ import type {
   ReportContent,
   ReportSection,
   ResearchJob,
-  ResearchReportSection,
   Source,
 } from "../../lib/types";
 
@@ -12,42 +11,30 @@ interface Props {
   job: ResearchJob;
 }
 
-// Same order + render rules as the PDF template — keep these aligned with
-// `backend/app/services/pdf_export.py:_SECTION_LABELS`.
-const SECTIONS: readonly {
-  key: ResearchReportSection;
-  ordinal: string;
-  title: string;
-  kind: "prose" | "list" | "callout";
-}[] = [
-  { key: "company_overview", ordinal: "01", title: "Company overview", kind: "prose" },
-  { key: "products_and_services", ordinal: "02", title: "Products & services", kind: "prose" },
-  { key: "target_customers", ordinal: "03", title: "Target customers", kind: "prose" },
-  { key: "business_signals", ordinal: "04", title: "Business signals", kind: "prose" },
-  { key: "risks_and_challenges", ordinal: "05", title: "Risks & challenges", kind: "prose" },
-  { key: "discovery_questions", ordinal: "06", title: "Discovery questions", kind: "list" },
-  { key: "outreach_strategy", ordinal: "07", title: "Outreach strategy", kind: "prose" },
-  { key: "unknowns", ordinal: "08", title: "Unknowns", kind: "callout" },
-];
-
 const CITATION_RE = /\[([a-zA-Z0-9_,\s-]+)\]/g;
 
 /**
  * Renders a `ResearchJob`'s `final_report` (JSON-encoded `ReportContent`)
- * as the editorial 8-section brief. Falls back to a "report payload
- * corrupt" notice if the JSON can't be parsed.
+ * as an editorial brief with dynamically-chosen sections. Falls back to a
+ * "report payload corrupt" notice if the JSON can't be parsed.
  */
 export function ReportView({ job }: Props) {
   const parsed = useMemo<ReportContent | null>(() => {
     if (!job.final_report) return null;
     try {
       const obj = JSON.parse(job.final_report) as ReportContent;
-      if (obj && typeof obj === "object" && "company_overview" in obj) return obj;
+      if (obj && typeof obj === "object" && Array.isArray(obj.sections)) return obj;
       return null;
     } catch {
       return null;
     }
   }, [job.final_report]);
+
+  const srcIndex = useMemo<Map<string, number>>(() => {
+    const map = new Map<string, number>();
+    (parsed?.sources ?? []).forEach((s, i) => map.set(s.id, i + 1));
+    return map;
+  }, [parsed?.sources]);
 
   if (!job.final_report) {
     return (
@@ -71,12 +58,6 @@ export function ReportView({ job }: Props) {
     );
   }
 
-  const srcIndex = useMemo<Map<string, number>>(() => {
-    const map = new Map<string, number>();
-    parsed.sources.forEach((s, i) => map.set(s.id, i + 1));
-    return map;
-  }, [parsed.sources]);
-
   return (
     <article className="space-y-10">
       <header className="space-y-1">
@@ -84,38 +65,48 @@ export function ReportView({ job }: Props) {
           Brief
         </p>
         <p className="text-xs text-ink-faint">
-          8 sections · {parsed.sources.length}{" "}
+          {parsed.sections.length}{" "}
+          {parsed.sections.length === 1 ? "section" : "sections"} ·{" "}
+          {parsed.sources.length}{" "}
           {parsed.sources.length === 1 ? "source" : "sources"}
         </p>
       </header>
 
-      {SECTIONS.map((s) => (
+      {parsed.summary.trim() ? (
+        <section className="space-y-3">
+          <h2 className="flex items-baseline gap-3 border-b border-rule/15 pb-2">
+            <span className="font-mono text-[0.6875rem] uppercase tracking-eyebrow text-accent">
+              00
+            </span>
+            <span className="font-serif text-2xl text-ink">Summary</span>
+          </h2>
+          <div className="border-l-2 border-accent/40 bg-accent/5 px-4 py-3">
+            <Paragraphs text={parsed.summary.trim()} srcIndex={srcIndex} />
+          </div>
+        </section>
+      ) : null}
+
+      {parsed.sections.map((section, i) => (
         <SectionBlock
-          key={s.key}
-          ordinal={s.ordinal}
-          title={s.title}
-          section={parsed[s.key]}
-          kind={s.kind}
+          key={i}
+          ordinal={String(i + 1).padStart(2, "0")}
+          section={section}
           srcIndex={srcIndex}
         />
       ))}
 
-      <SourcesList sources={parsed.sources} />
+      <SourcesList sources={parsed.sources} nextOrdinal={parsed.sections.length + 1} />
     </article>
   );
 }
 
 function SectionBlock({
   ordinal,
-  title,
   section,
-  kind,
   srcIndex,
 }: {
   ordinal: string;
-  title: string;
   section: ReportSection;
-  kind: "prose" | "list" | "callout";
   srcIndex: Map<string, number>;
 }) {
   const body = (section.content || "").trim();
@@ -126,19 +117,13 @@ function SectionBlock({
         <span className="font-mono text-[0.6875rem] uppercase tracking-eyebrow text-accent">
           {ordinal}
         </span>
-        <span className="font-serif text-2xl text-ink">{title}</span>
+        <span className="font-serif text-2xl text-ink">{section.heading}</span>
       </h2>
 
       {body.length === 0 ? (
         <p className="text-sm italic text-ink-faint">
           No content surfaced for this section.
         </p>
-      ) : kind === "list" ? (
-        <QuestionList text={body} srcIndex={srcIndex} />
-      ) : kind === "callout" ? (
-        <div className="border-l-2 border-accent/40 bg-accent/5 px-4 py-3">
-          <Paragraphs text={body} srcIndex={srcIndex} />
-        </div>
       ) : (
         <Paragraphs text={body} srcIndex={srcIndex} />
       )}
@@ -178,36 +163,6 @@ function Paragraphs({
         </p>
       ))}
     </div>
-  );
-}
-
-function QuestionList({
-  text,
-  srcIndex,
-}: {
-  text: string;
-  srcIndex: Map<string, number>;
-}) {
-  const lines = text
-    .split(/\n+/)
-    .map((line) => line.replace(/^\s*(?:\d+[.)]|[-•*])\s*/, "").trim())
-    .filter(Boolean);
-  const items =
-    lines.length > 1
-      ? lines
-      : text
-          .split("?")
-          .map((p) => p.trim())
-          .filter(Boolean)
-          .map((p) => (p.endsWith("?") ? p : `${p}?`));
-  return (
-    <ol className="ml-5 list-decimal space-y-2 text-sm leading-relaxed text-ink-soft">
-      {items.map((q, i) => (
-        <li key={i}>
-          <Cited text={q} srcIndex={srcIndex} />
-        </li>
-      ))}
-    </ol>
   );
 }
 
@@ -256,13 +211,13 @@ function Cited({
   );
 }
 
-function SourcesList({ sources }: { sources: Source[] }) {
+function SourcesList({ sources, nextOrdinal }: { sources: Source[]; nextOrdinal: number }) {
   if (sources.length === 0) return null;
   return (
     <section className="space-y-3">
       <h2 className="flex items-baseline gap-3 border-b border-rule/15 pb-2">
         <span className="font-mono text-[0.6875rem] uppercase tracking-eyebrow text-accent">
-          09
+          {String(nextOrdinal).padStart(2, "0")}
         </span>
         <span className="font-serif text-2xl text-ink">Sources</span>
       </h2>

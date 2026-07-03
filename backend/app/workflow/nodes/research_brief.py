@@ -1,9 +1,3 @@
-"""Research brief node.
-
-Turns the user's inputs + clarification answers into a structured ResearchBrief,
-which the plan node then expands into subtopics.
-"""
-
 from __future__ import annotations
 
 from typing import cast
@@ -21,11 +15,9 @@ def _serialize_brief(brief: ResearchBrief) -> str:
     return (
         f"## Research Goal\n{brief.research_goal}\n\n"
         f"## Key Entities\n{', '.join(brief.key_entities) if brief.key_entities else 'None specified'}\n\n"
-        f"## Constraints\n{', '.join(brief.constraints) if brief.constraints else 'None specified'}\n\n"
-        f"## Source Strategy\n{brief.source_strategy}\n"
+        f"## Constraints\n{', '.join(brief.constraints) if brief.constraints else 'None specified'}\n"
     )
 
- 
 async def write_research_brief(state: AgentState, config: RunnableConfig) -> Command:
     model = _create_model(temperature=0.0).with_structured_output(ResearchBrief).with_retry(
         stop_after_attempt=3

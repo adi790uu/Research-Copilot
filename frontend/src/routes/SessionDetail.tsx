@@ -138,7 +138,7 @@ export default function SessionDetail() {
     if (!raw) return null;
     try {
       const obj = JSON.parse(raw) as ResearchPlan;
-      if (obj && Array.isArray(obj.subtopics)) return obj;
+      if (obj && Array.isArray(obj.coverage_angles)) return obj;
     } catch {
       // bad JSON in the DB — fall through
     }
@@ -182,8 +182,8 @@ export default function SessionDetail() {
     setFocus(target);
   }, []);
 
-  // Approve the plan: persists any edits, creates the phase-2 job + triggers
-  // the worker, then flips into polling mode. Idempotent on the backend
+  // Approve the plan: creates the phase-2 job + triggers the worker, then
+  // flips into polling mode. Idempotent on the backend
   // (job_id key); the `approving` guard prevents double-fires from the UI.
   const handleApprovePlan = useCallback(async () => {
     if (approving || jobId) return;
@@ -420,11 +420,15 @@ export default function SessionDetail() {
  * human-friendly title. Falls back to a sensible default. */
 function deriveReportTitle(rawJson: string, fallback: string): string {
   try {
-    const parsed = JSON.parse(rawJson) as { company_overview?: { content?: string } };
-    const opening = parsed?.company_overview?.content?.split("\n")[0]?.trim();
+    const parsed = JSON.parse(rawJson) as {
+      summary?: string;
+      sections?: { content?: string }[];
+    };
+    const source = parsed?.summary?.trim() || parsed?.sections?.[0]?.content?.trim();
+    const opening = source?.split("\n")[0]?.trim();
     if (opening && opening.length <= 140) return opening;
   } catch {
-    // not structured JSON or no overview — fall through
+    // not structured JSON or no content — fall through
   }
   return `${fallback} — research brief`;
 }

@@ -2,7 +2,7 @@
 
 Once a session's research_job hits `completed`, the user can ask
 follow-up questions and the assistant answers grounded in:
-  - the structured ReportContent (8 sections + per-section source_ids)
+  - the ReportContent (summary + dynamic sections with per-section source_ids)
   - the flat sources list (id + title + url + snippet)
 
 No new research is dispatched. This is straightforward RAG over what the
@@ -64,19 +64,13 @@ def _format_report(report_json: str) -> str:
     except (ValueError, TypeError):
         return report_json[:_MAX_SECTION_CHARS * 8]  # fallback raw
 
-    sections = [
-        ("Company overview", "company_overview"),
-        ("Products & services", "products_and_services"),
-        ("Target customers", "target_customers"),
-        ("Business signals", "business_signals"),
-        ("Risks & challenges", "risks_and_challenges"),
-        ("Discovery questions", "discovery_questions"),
-        ("Outreach strategy", "outreach_strategy"),
-        ("Unknowns", "unknowns"),
-    ]
     parts: list[str] = []
-    for label, key in sections:
-        sec = data.get(key) or {}
+    summary = (data.get("summary") or "").strip()
+    if summary:
+        parts.append(f"## Summary\n{summary}")
+
+    for sec in data.get("sections") or []:
+        label = (sec.get("heading") or "Section").strip()
         content = (sec.get("content") or "").strip()
         if not content:
             continue
