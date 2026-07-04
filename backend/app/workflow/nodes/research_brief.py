@@ -18,9 +18,12 @@ def _serialize_brief(brief: ResearchBrief) -> str:
         f"## Constraints\n{', '.join(brief.constraints) if brief.constraints else 'None specified'}\n"
     )
 
+
 async def write_research_brief(state: AgentState, config: RunnableConfig) -> Command:
-    model = _create_model(temperature=0.0).with_structured_output(ResearchBrief).with_retry(
-        stop_after_attempt=3
+    model = (
+        _create_model(temperature=0.0)
+        .with_structured_output(ResearchBrief)
+        .with_retry(stop_after_attempt=3)
     )
     prompt = research_brief_prompt.format(
         messages=get_buffer_string(state.get("messages", [])),

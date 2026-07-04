@@ -1,11 +1,3 @@
-"""Read access to research jobs and their progress artefacts.
-
-The phase-2 worker (TypeScript Trigger.dev task) writes job results,
-researcher rows, events and tasks straight to the shared Postgres. The
-Python backend only *creates* the pending job (on plan approval) and
-*reads* progress back for the API, so this module is read-mostly.
-"""
-
 from __future__ import annotations
 
 import json
@@ -20,9 +12,6 @@ from app.persistence.models import (
     ResearchJobResearcherORM,
     ResearchTaskORM,
 )
-
-
-# ---- jobs ------------------------------------------------------------------
 
 
 async def create_job(brief_id: str, user_id: str, research_plan: str) -> str:
@@ -96,9 +85,6 @@ def _serialize_job(row: ResearchJobORM) -> dict:
     }
 
 
-# ---- researchers -----------------------------------------------------------
-
-
 async def get_job_researchers(job_id: str) -> list[dict]:
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as db:
@@ -119,9 +105,6 @@ async def get_job_researchers(job_id: str) -> list[dict]:
         ]
 
 
-# ---- events ----------------------------------------------------------------
-
-
 async def get_job_events(job_id: str) -> list[dict]:
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as db:
@@ -139,9 +122,6 @@ async def get_job_events(job_id: str) -> list[dict]:
             }
             for r in rows
         ]
-
-
-# ---- tasks -----------------------------------------------------------------
 
 
 async def get_job_tasks(job_id: str) -> list[dict]:

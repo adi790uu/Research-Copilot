@@ -1,0 +1,95 @@
+{
+  "meta": {
+    "company": "Stripe",
+    "generatedAt": "2026-07-03T12:50:52.699Z",
+    "nearEmptyThreshold": 200
+  },
+  "searchOnly": {
+    "stats": {
+      "n": 11,
+      "min": 139,
+      "max": 45067,
+      "median": 144,
+      "mean": 11658
+    },
+    "nearEmpty": 6
+  },
+  "searchPlusExtract": {
+    "stats": {
+      "n": 11,
+      "min": 0,
+      "max": 45067,
+      "median": 0,
+      "mean": 11581
+    },
+    "nearEmpty": 6
+  },
+  "rows": [
+    {
+      "url": "https://www.reddit.com/r/smallbusiness/comments/1fi7gre/how_is_your_experience_with_stripe",
+      "searchChars": 29129,
+      "extractChars": 29129,
+      "delta": 0
+    },
+    {
+      "url": "https://www.reddit.com/r/stripe/comments/1k74qs9/stripe_account_reviews",
+      "searchChars": 144,
+      "extractChars": 0,
+      "delta": -144
+    },
+    {
+      "url": "https://www.reddit.com/r/ecommerce/comments/wa20e0/do_not_use_stripe_this_is_your_warning_learn_from",
+      "searchChars": 143,
+      "extractChars": 0,
+      "delta": -143
+    },
+    {
+      "url": "https://www.reddit.com/r/stripe/comments/1lupxrs/is_stripe_really_as_bad_as_the_posts_on_this",
+      "searchChars": 45067,
+      "extractChars": 45067,
+      "delta": 0
+    },
+    {
+      "url": "https://www.reddit.com/r/webdev/comments/11kd00e/is_stripe_worth_using_or_alternative_platform",
+      "searchChars": 144,
+      "extractChars": 0,
+      "delta": -144
+    },
+    {
+      "url": "https://www.reddit.com/r/stripe/comments/19d8p2z/absolute_nightmare_2_months_and_counting_review",
+      "searchChars": 140,
+      "extractChars": 0,
+      "delta": -140
+    },
+    {
+      "url": "https://www.reddit.com/r/InterviewCoderHQ/comments/1r0hr05/stripe_swe_interview_experience_fulltime_onsite",
+      "searchChars": 8665,
+      "extractChars": 8665,
+      "delta": 0
+    },
+    {
+      "url": "https://www.reddit.com/r/leetcode/comments/1orh0tp/stripe_interview_experience_and_odds",
+      "searchChars": 4384,
+      "extractChars": 4384,
+      "delta": 0
+    },
+    {
+      "url": "https://www.reddit.com/r/DevelEire/comments/1fulyq0/anyone_work_in_stripe_how_is_it_and_is_the_money",
+      "searchChars": 40142,
+      "extractChars": 40142,
+      "delta": 0
+    },
+    {
+      "url": "https://www.reddit.com/r/DevelEire/comments/174sj4d/whats_stripe_like_to_work_for",
+      "searchChars": 139,
+      "extractChars": 0,
+      "delta": -139
+    },
+    {
+      "url": "https://www.reddit.com/r/cscareerquestions/comments/1okbrmg/should_i_leave_my_decent_remote_job_for_hybrid",
+      "searchChars": 144,
+      "extractChars": 0,
+      "delta": -144
+    }
+  ]
+}

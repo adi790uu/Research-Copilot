@@ -36,12 +36,13 @@ async def clarify_with_user(state: AgentState, config: RunnableConfig) -> Comman
     if not allow_clarification:
         return Command(goto="write_research_brief")
 
-    # Hard single-round limit, enforced in code rather than left to the model.
     if _already_clarified(state.get("messages", [])):
         return Command(goto="write_research_brief")
 
-    model = _create_model(temperature=0.0).with_structured_output(ClarifyWithUser).with_retry(
-        stop_after_attempt=3
+    model = (
+        _create_model(temperature=0.0)
+        .with_structured_output(ClarifyWithUser)
+        .with_retry(stop_after_attempt=3)
     )
 
     prompt = clarify_with_user_instructions.format(

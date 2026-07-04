@@ -16,7 +16,6 @@ import { thinkTool } from "@/tools/think";
 
 type Configurable = { jobId?: string };
 
-/** All tool message contents — the findings passed to the report writer. */
 function notesFromToolCalls(messages: BaseMessage[]): string[] {
   return messages.filter((m) => m instanceof ToolMessage).map((m) => String(m.content));
 }
@@ -55,7 +54,6 @@ async function supervisorToolsNode(
 
   const toolMessages: ToolMessage[] = [];
 
-  // think_tool reflections — record then continue.
   for (const tc of toolCalls.filter((t) => t.name === "think_tool")) {
     toolMessages.push(
       new ToolMessage({

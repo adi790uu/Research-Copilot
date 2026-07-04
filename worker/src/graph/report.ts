@@ -1,52 +1,69 @@
 import { HumanMessage } from "@langchain/core/messages";
+import { logger } from "@trigger.dev/sdk/v3";
 import type { Source } from "@/db/schema";
 import {
   type ReportContent,
   type ReportDraft,
   reportContentSchema,
 } from "@/graph/report-schema";
+import { citedIds } from "@/graph/sources";
 import type { Graph2State } from "@/graph/state";
 import { createModel, isTokenLimitExceeded } from "@/llm/models";
 import { finalReportPrompt, reviewReportPrompt, todayStr } from "@/prompts";
 
-// Two passes over a dynamically-structured report:
-//   1. draft summary + sections (writer picks the sections)
-//   2. one whole-report review to tighten prose and firm up grounding
-// Hallucinated source IDs are dropped after each pass.
+const MAX_DRAFT_ATTEMPTS = 3;
+const REVIEW_FINDINGS_CHARS = 24_000;
+const MIN_REVIEW_RETENTION = 0.6;
 
 function sourcesBlock(sources: Source[]): string {
   if (sources.length === 0) return "(no sources collected)";
   return sources.map((s) => `[${s.id}] ${s.title} — ${s.url}`).join("\n");
 }
 
-function filterDraft(draft: ReportDraft, valid: Set<string>): ReportDraft {
+function reconcileDraft(draft: ReportDraft, valid: Set<string>): ReportDraft {
   return {
     summary: draft.summary,
-    sections: draft.sections.map((s) => ({
-      heading: s.heading,
-      content: s.content,
-      source_ids: s.source_ids.filter((id) => valid.has(id)),
-    })),
+    sections: draft.sections.map((s) => {
+      const inline = citedIds(s.content).filter((id) => valid.has(id));
+      const declared = s.source_ids.filter((id) => valid.has(id));
+      return {
+        heading: s.heading,
+        content: s.content,
+        source_ids: [...new Set([...inline, ...declared])],
+      };
+    }),
   };
+}
+
+function groundingCoverage(draft: ReportDraft): { coverage: number; cited: number; total: number } {
+  const sentences = [draft.summary, ...draft.sections.map((s) => s.content)]
+    .flatMap((t) => t.split(/(?<=[.!?])\s+/))
+    .map((s) => s.trim())
+    .filter((s) => s.length > 40);
+  if (sentences.length === 0) return { coverage: 1, cited: 0, total: 0 };
+  const cited = sentences.filter((s) => /\[src_[0-9a-f]+\]/.test(s)).length;
+  return { coverage: cited / sentences.length, cited, total: sentences.length };
 }
 
 const totalLen = (d: ReportDraft): number =>
   d.summary.length + d.sections.reduce((n, s) => n + s.content.length, 0);
 
-export async function finalReportNode(state: Graph2State): Promise<Partial<Graph2State>> {
-  const date = todayStr();
-  const sources = state.sources;
-  const validIds = new Set(sources.map((s) => s.id));
-  const findings = state.notes.length ? state.notes.join("\n\n") : "(no findings)";
+type DraftResult =
+  | { draft: ReportDraft; findingsText: string }
+  | { draft: null; findingsText: string; error: string };
 
-  // --- Pass 1: draft the report (shrink findings on overflow) ---
+async function draftReport(
+  state: Graph2State,
+  sources: Source[],
+  findings: string,
+  date: string,
+): Promise<DraftResult> {
   const writer = createModel({ temperature: 0.3 })
     .withStructuredOutput(reportContentSchema)
     .withRetry({ stopAfterAttempt: 2 });
 
   let findingsText = findings;
-  let draft: ReportDraft | null = null;
-  for (let attempt = 0; attempt <= 3; attempt++) {
+  for (let attempt = 0; attempt <= MAX_DRAFT_ATTEMPTS; attempt++) {
     const prompt = finalReportPrompt({
       companyName: state.companyName,
       website: state.website,
@@ -56,46 +73,68 @@ export async function finalReportNode(state: Graph2State): Promise<Partial<Graph
       date,
     });
     try {
-      draft = (await writer.invoke([new HumanMessage(prompt)])) as ReportDraft;
-      break;
+      const draft = (await writer.invoke([new HumanMessage(prompt)])) as ReportDraft;
+      return { draft, findingsText };
     } catch (err) {
-      if (!isTokenLimitExceeded(err) || attempt >= 3) {
-        return { report: fallbackReport(findingsText, sources, String(err)) };
+      if (!isTokenLimitExceeded(err) || attempt >= MAX_DRAFT_ATTEMPTS) {
+        return { draft: null, findingsText, error: String(err) };
       }
       findingsText =
         findingsText.slice(0, Math.floor(findingsText.length * 0.7)) || findingsText.slice(0, 5000);
     }
   }
-  if (!draft || draft.sections.length === 0) {
-    return { report: fallbackReport(findingsText, sources, "empty draft") };
-  }
-  draft = filterDraft(draft, validIds);
+  return { draft: null, findingsText, error: "draft attempts exhausted" };
+}
 
-  // --- Pass 2: one whole-report review; keep the draft on failure/collapse ---
+async function reviewReport(
+  state: Graph2State,
+  draft: ReportDraft,
+  findingsText: string,
+  validIds: Set<string>,
+  date: string,
+): Promise<ReportDraft> {
   const reviewer = createModel({ temperature: 0.2 })
     .withStructuredOutput(reportContentSchema)
     .withRetry({ stopAfterAttempt: 2 });
 
-  let final = draft;
   try {
     const prompt = reviewReportPrompt({
       companyName: state.companyName,
       draft: JSON.stringify(draft),
-      findings: findingsText.slice(0, 24000),
+      findings: findingsText.slice(0, REVIEW_FINDINGS_CHARS),
       validSourceIds: [...validIds].sort().join(", ") || "(none)",
       date,
     });
-    const reviewed = filterDraft(
+    const reviewed = reconcileDraft(
       (await reviewer.invoke([new HumanMessage(prompt)])) as ReportDraft,
       validIds,
     );
-    // Reject a review that dropped the report's substance.
-    if (reviewed.sections.length > 0 && totalLen(reviewed) >= totalLen(draft) * 0.6) {
-      final = reviewed;
+    if (reviewed.sections.length > 0 && totalLen(reviewed) >= totalLen(draft) * MIN_REVIEW_RETENTION) {
+      return reviewed;
     }
-  } catch {
-    // keep draft
+  } catch {}
+  return draft;
+}
+
+export async function finalReportNode(state: Graph2State): Promise<Partial<Graph2State>> {
+  const date = todayStr();
+  const sources = state.sources;
+  const validIds = new Set(sources.map((s) => s.id));
+  const findings = state.notes.length ? state.notes.join("\n\n") : "(no findings)";
+
+  const drafted = await draftReport(state, sources, findings, date);
+  if (drafted.draft === null) {
+    return { report: fallbackReport(drafted.findingsText, sources, drafted.error) };
   }
+  if (drafted.draft.sections.length === 0) {
+    return { report: fallbackReport(drafted.findingsText, sources, "empty draft") };
+  }
+
+  let final = reconcileDraft(drafted.draft, validIds);
+  logger.info("report_grounding_draft", groundingCoverage(final));
+
+  final = await reviewReport(state, final, drafted.findingsText, validIds, date);
+  logger.info("report_grounding_final", groundingCoverage(final));
 
   return { report: { ...final, sources } };
 }

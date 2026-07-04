@@ -1,0 +1,295 @@
+{
+  "meta": {
+    "company": "Equal",
+    "generatedAt": "2026-07-04T16:31:20.439Z",
+    "queries": [
+      "funding round investors valuation",
+      "raised Series total funding",
+      "acquisition merger investment"
+    ],
+    "fundingDomains": [
+      "crunchbase.com",
+      "techcrunch.com",
+      "pitchbook.com",
+      "sec.gov",
+      "bloomberg.com",
+      "reuters.com"
+    ]
+  },
+  "broad": [
+    {
+      "score": 0.5553635,
+      "host": "pitchbook.com",
+      "title": "When headline valuations aren’t what they seem - PitchBook",
+      "url": "https://pitchbook.com/news/articles/when-headline-valuations-arent-what-they-seem",
+      "snippet": "# When headline valuations aren’t what they seem\n\n## The high demand for hot AI startups has led to an uptick in different valuations for the same funding round.\n\nStartup valuations in news headlines don’t always match the price every VC paid behind the scenes.\n\nWhile letting investors in the same f"
+    },
+    {
+      "score": 0.5010992,
+      "host": "techcrunch.com",
+      "title": "Why AI startups are selling the same equity at two different prices - TechCrunch",
+      "url": "https://techcrunch.com/2026/03/03/why-ai-startups-are-selling-the-same-equity-at-two-different-prices/",
+      "snippet": "Recent rounds employing this scheme include Aaru’s Series A. The synthetic-customer research startup raised a round led by Redpoint, which invested a large portion of its check at a $450 million valuation, the Wall Street Journal reported. Redpoint then invested a smaller portion at a $1 billion val"
+    },
+    {
+      "score": 0.3430341,
+      "host": "amp.axios.com",
+      "title": "Esusu's $1.2b valuation, Steelhead's $84m, and Apollo's golf IPO - Axios",
+      "url": "https://amp.axios.com/pro-rata-premium-first-look-esusus-steelheads-golf-ipo-6e8291b6-070d-4441-859f-bcfefe17265a.html",
+      "snippet": "🚑 Ritten, a Philadelphia developer of EHR and clinic management software for behavioral health providers, raised a $35m Series B led by Five Elms Capital, with participation from Threshold Ventures, 8VC and Bienville Capital. Go deeper\n\n• LI.FI, a Berlin-based crypto infrastructure platform, raised"
+    },
+    {
+      "score": 0.2988703,
+      "host": "fintechfutures.com",
+      "title": "October 2025: Top 5 funding stories of the month - FinTech Futures",
+      "url": "https://www.fintechfutures.com/venture-capital-funding/october-2025-top-five-fintech-funding-stories-of-the-month",
+      "snippet": "Wealthsimple says its latest cash injection will be used to accelerate its product roadmap \"across investing, spending, and credit\", with the company currently rolling out its first credit card offering. It adds that the funds will also help \"support strategic opportunities to expand its platform\".\n"
+    },
+    {
+      "score": 0.28628942,
+      "host": "techcrunch.com",
+      "title": "VCs pledge not to take money from Russia or China, and Databricks raises a humongous round - TechCrunch",
+      "url": "https://techcrunch.com/2024/12/20/vcs-pledge-not-to-take-money-from-russia-china-databricks-raises-humongous-round/",
+      "snippet": "Travel is back: Canadian travel startup Hostaway, which makes software for vacation rental operators, raised $365 million at a $925 million valuation. The round was led by General Atlantic and will help the company double down on growth.\n\nMomentum for accessibility: Evinced, which helps companies co"
+    },
+    {
+      "score": 0.2742425,
+      "host": "techcrunch.com",
+      "title": "The year is coming to a close, but startup news keeps rolling in - TechCrunch",
+      "url": "https://techcrunch.com/2024/12/20/the-year-is-coming-to-a-close-but-startup-news-keeps-rolling-in/",
+      "snippet": "Travel is back: Canadian travel startup Hostaway, which makes software for vacation rental operators, raised $365 million at a $925 million valuation. The round was led by General Atlantic and will help the company double down on growth.\n\nMomentum for accessibility: Evinced, which helps companies co"
+    },
+    {
+      "score": 0.25917634,
+      "host": "axios.com",
+      "title": "Exodigo digs $96M, KKR weighs Italian buy, and Via's IPO - Axios",
+      "url": "https://www.axios.com/pro/all-deals/2025/07/16/pro-rata-premium-first-look",
+      "snippet": "Exit Content Preview\n\nVenture Capital\n\n• Exodigo, a Palo Alto, Calif.-based underground data intelligence company, raised $96m in Series B funding led by Zeev Ventures and Greenfield Partners, valuing it at $700m. Go deeper\n\n• vVARDIS, a Swiss dental company offering drill-free treatment for early t"
+    },
+    {
+      "score": 0.2023017,
+      "host": "fintechfutures.com",
+      "title": "Stablecoin payments start-up KAST raises $80m Series A - FinTech Futures",
+      "url": "https://www.fintechfutures.com/venture-capital-funding/kast-lands-80m-series-a",
+      "snippet": "## Join us to explore the future of fintech marketing and unlock strategies for success in 2026!\n\nSign up now\n\n### You May Also Like\n\nSponsored\n\n#### Sphinx raises $7.1m to build every financial institution's last compliance hire\n\nFeb 17, 2026\nSponsored\n\n#### Video: Merlin Investor at FinovateFall 2"
+    },
+    {
+      "score": 0.15201993,
+      "host": "techcrunch.com",
+      "title": "Here are Latin America’s biggest startups based on valuation - TechCrunch",
+      "url": "https://techcrunch.com/2025/05/05/here-are-latin-americas-biggest-startups-based-on-valuation/",
+      "snippet": "Clip became a unicorn in 2021 following a $250 million round led by SoftBank and Viking, and maintained this status since then. The $100 million round it raised in June 2024 confirmed its $2 billion valuation as the company was “on the brink of profitability,” its CEO told Bloomberg.\n\nLoggi (2013): "
+    },
+    {
+      "score": 0.12433016,
+      "host": "pitchbook.com",
+      "title": "Ramp raises fifth Founders Fund-led round as firms bet more within their portfolio - PitchBook",
+      "url": "https://pitchbook.com/news/articles/ramp-raises-200m-16b-fifth-founders-fund-round",
+      "snippet": "It’s the latest example of VCs doubling down on their hottest portfolio companies as insider-led deals remain on the rise. Ten percent of all US VC deals in Q1 2025 were led by an existing investor, up from 9% in 2024, according to PitchBook’s Venture Monitor Report.\n\nThrive Capital, General Catalys"
+    },
+    {
+      "score": 0.12186354,
+      "host": "forbes.com",
+      "title": "How Three Small Businesses Are Growing By Acquisition - Forbes",
+      "url": "https://www.forbes.com/sites/alisoncoleman/2025/01/30/how-three-small-businesses-are-growing-by-acquisition/",
+      "snippet": "“Acquiring another business can rapidly expand a company's market presence and customer base, enabling greater competitive advantage,” he says. “Acquisitions can provide immediate access to new technologies, products, or skilled personnel that may take much time to develop in-house. Merger operation"
+    },
+    {
+      "score": 0.11717781,
+      "host": "pitchbook.com",
+      "title": "2025 Annual US VC Valuations and Returns Report - PitchBook",
+      "url": "https://pitchbook.com/news/reports/2025-annual-us-vc-valuations-and-returns-report",
+      "snippet": "Yet, venture is becoming more concentrated than ever, and the high prices and valuation step-ups are not evenly distributed. PitchBook’s Valuation Estimates highlight the staleness of valuations in the market. For unicorns, the Estimates show that 222 of the 857 unicorns have likely seen their marke"
+    },
+    {
+      "score": 0.115670934,
+      "host": "ftadviser.com",
+      "title": "Advice firm completes 4th acquisition of 2024 - FT Adviser",
+      "url": "https://www.ftadviser.com/mergers-acquisitions/2024/12/10/advice-firm-completes-4th-acquisition-of-2024/",
+      "snippet": "OneDome buys mortgage broker Coreco for 7-figure sum\n\nMergers & acquis...\n\nDec 5 2024\n\nMoneyfarm buys investment services firm\n\nMost Read\n\nVulnerable clients\n\nDec 9 2024\n\nHow to have real conversations with clients on vulnerability\n\nPensions\n\nDec 5 2024\n\nUnpacking the planning implications of includ"
+    },
+    {
+      "score": 0.11429952,
+      "host": "ftadviser.com",
+      "title": "IFAs delaying succession planning for ‘too long’ - FT Adviser",
+      "url": "https://www.ftadviser.com/next-generation-of-advice/2025/3/18/ifas-delaying-succession-planning-for-too-long/",
+      "snippet": "Financial Ombudsman Service\n       FSCS\n    \n    Tax\n    \n    Tax Home\n    \n       Inheritance tax\n       Capital Gains Tax\n       Tax avoidance\n       Tax-efficient investments\n       National insurance\n       HMRC\n    \n    Your profession\n    \n    Your profession Home\n    \n       FT Wealth Managem"
+    },
+    {
+      "score": 0.104761116,
+      "host": "ainvest.com",
+      "title": "Redfin's Q2 2025 Earnings and Merger with Rocket: A Strategic Reassessment in a Resurgent Real Estate Tech Sector - AInvest",
+      "url": "https://www.ainvest.com/news/redfin-q2-2025-earnings-merger-rocket-strategic-reassessment-resurgent-real-estate-tech-sector-2509/",
+      "snippet": "Redfin’s acquisition by Rocket Companies marks a strategic pivot toward vertical integration. The merger, finalized in July 2025, created a unified platform combining Rocket’s mortgage expertise with Redfin’s brokerage services. Rocket’s Q2 2025 results post-merger showed adjusted revenue of $1.34 b"
+    },
+    {
+      "score": 0.094218515,
+      "host": "ftadviser.com",
+      "title": "NuWealth rebrands to Quilter Invest - FT Adviser",
+      "url": "https://www.ftadviser.com/mergers-acquisitions/2025/10/2/nuwealth-rebrands-to-quilter-invest/",
+      "snippet": "Sign InRegister\n\nSign InRegister\n\nSign inRegister\n\nMergers & acquisitionsOct 2 2025\n\n# NuWealth rebrands to Quilter Invest\n\nSearch supported by\n\nfollow us on social\n\nTara O'Connor\n\nDigital savings and investment platform NuWealth has been rebranded to Quilter Invest.\n\nUnlimited access to our award-w"
+    },
+    {
+      "score": 0.094218515,
+      "host": "consultancy.uk",
+      "title": "UK CEOs step up M&A to boost AI transformation - Consultancy.uk",
+      "url": "https://www.consultancy.uk/news/44129/uk-ceos-step-up-ma-to-boost-ai-transformation",
+      "snippet": "A new poll of UK CEOs shows growing merger and acquisition intent, something which researchers from EY say signals “growing confidence in dealmaking despite ongoing global uncertainty”. The report from EY, which pivoted to market itself as a ‘Transformations’ partner in 2025 – asking prospective cli"
+    },
+    {
+      "score": 0.031789716,
+      "host": "forbes.com.au",
+      "title": "Beyond tokenism: Delivering record-breaking diversity in startups - Forbes Australia",
+      "url": "https://www.forbes.com.au/news/leadership/beyond-tokenism-delivering-record-breaking-diversity-in-startups/",
+      "snippet": ";z-index:unset}.ap3w-embeddable-form-675b6deccc5845ed892fc33b:before{content:' ';display:block;position:absolute;pointer-events:none;left:0;top:0;width:100%;height:100%;opacity:0%;background-image:url();background-position:center center;background-size:cover;background-repeat:no-repeat}.ap3w-embedda"
+    }
+  ],
+  "scoped": [
+    {
+      "score": 0.5553635,
+      "host": "pitchbook.com",
+      "title": "When headline valuations aren’t what they seem - PitchBook",
+      "url": "https://pitchbook.com/news/articles/when-headline-valuations-arent-what-they-seem",
+      "snippet": "# When headline valuations aren’t what they seem\n\n## The high demand for hot AI startups has led to an uptick in different valuations for the same funding round.\n\nStartup valuations in news headlines don’t always match the price every VC paid behind the scenes.\n\nWhile letting investors in the same f"
+    },
+    {
+      "score": 0.5010992,
+      "host": "techcrunch.com",
+      "title": "Why AI startups are selling the same equity at two different prices - TechCrunch",
+      "url": "https://techcrunch.com/2026/03/03/why-ai-startups-are-selling-the-same-equity-at-two-different-prices/",
+      "snippet": "Recent rounds employing this scheme include Aaru’s Series A. The synthetic-customer research startup raised a round led by Redpoint, which invested a large portion of its check at a $450 million valuation, the Wall Street Journal reported. Redpoint then invested a smaller portion at a $1 billion val"
+    },
+    {
+      "score": 0.37655488,
+      "host": "techcrunch.com",
+      "title": "Almost 40 new unicorns have been minted so far this year — here they are - TechCrunch",
+      "url": "https://techcrunch.com/2026/03/11/almost-40-new-unicorns-have-been-minted-so-far-this-year-here-they-are/",
+      "snippet": "Garner — $1.4 billion: This company uses data to help patients find better doctors. Founded in 2019, it last raised a $118 million Series D and has raised $179 million in funding to date from investors like Rounders Fund and Redpoint Ventures, according to Pitchbook.\n\nApptronik — $5.3 billion: This "
+    },
+    {
+      "score": 0.32530668,
+      "host": "pitchbook.com",
+      "title": "3 charts: Startup founders and VCs find more equal footing - PitchBook News & Analysis",
+      "url": "https://pitchbook.com/news/articles/founders-vc-dealmaking-indicator-neutral",
+      "snippet": "Despite strong growth in AI valuations, prices have largely stagnated across the VC landscape. The proportion of flat and down rounds have reached the highest level in a decade, accounting for 28.4% of all deals in Q2 2024, according to PitchBook’s Q2 2024 US VC Valuations Report. Though valuation s"
+    },
+    {
+      "score": 0.28628942,
+      "host": "techcrunch.com",
+      "title": "VCs pledge not to take money from Russia or China, and Databricks raises a humongous round - TechCrunch",
+      "url": "https://techcrunch.com/2024/12/20/vcs-pledge-not-to-take-money-from-russia-china-databricks-raises-humongous-round/",
+      "snippet": "Travel is back: Canadian travel startup Hostaway, which makes software for vacation rental operators, raised $365 million at a $925 million valuation. The round was led by General Atlantic and will help the company double down on growth.\n\nMomentum for accessibility: Evinced, which helps companies co"
+    },
+    {
+      "score": 0.2742425,
+      "host": "techcrunch.com",
+      "title": "The year is coming to a close, but startup news keeps rolling in - TechCrunch",
+      "url": "https://techcrunch.com/2024/12/20/the-year-is-coming-to-a-close-but-startup-news-keeps-rolling-in/",
+      "snippet": "Travel is back: Canadian travel startup Hostaway, which makes software for vacation rental operators, raised $365 million at a $925 million valuation. The round was led by General Atlantic and will help the company double down on growth.\n\nMomentum for accessibility: Evinced, which helps companies co"
+    },
+    {
+      "score": 0.2105069,
+      "host": "techcrunch.com",
+      "title": "It’s not your imagination: AI seed startups are commanding higher valuations - TechCrunch",
+      "url": "https://techcrunch.com/2026/03/31/its-not-your-imagination-ai-seed-startups-are-commanding-higher-valuations/",
+      "snippet": "That valuation seemed high for that amount at the time, he recalled. But today, “it’s pretty typical” to see a $10 million seed round at a $40 million to $45 million post-money valuation, he said, especially if you are an AI company.\n\nActually, that type of thing happens only if you are an AI compan"
+    },
+    {
+      "score": 0.2023017,
+      "host": "pitchbook.com",
+      "title": "Top 10 startups now control record 51.8% of total unicorn value - PitchBook",
+      "url": "https://pitchbook.com/news/articles/top-10-startups-now-control-record-51-8-of-total-unicorn-value",
+      "snippet": "“The venture market now operates as two distinct ecosystems; while the largest names raise frequent rounds at rapidly rising valuations, a substantial portion of the market has struggled to raise fresh capital,” the report notes.\n\nThe top 10 US startups by valuation now make up 51.8% of the entire u"
+    },
+    {
+      "score": 0.19488862,
+      "host": "techcrunch.com",
+      "title": "VCs deploy ‘kingmaking’ strategy to crown AI winners in their infancy - TechCrunch",
+      "url": "https://techcrunch.com/2025/12/03/vcs-deploy-kingmaking-strategy-to-crown-ai-winners-in-their-infancy/",
+      "snippet": "Similarly, Campfire AI had two back-to-back funding rounds. In October, it grabbed a $65 million Series B, just a couple of months after announcing a $35 million Series A round led by Accel.\n\nAI ERP is just one of the several AI application categories where startups are raising funding in rapid succ"
+    },
+    {
+      "score": 0.1531564,
+      "host": "reuters.com",
+      "title": "a16z-backed data firms Fivetran, dbt Labs to merge in all-stock deal - Reuters",
+      "url": "https://www.reuters.com/business/a16z-backed-data-firms-fivetran-dbt-labs-merge-all-stock-deal-2025-10-13/",
+      "snippet": "The goal is to build a more comprehensive platform for enterprises' data needs, Fraser said, with the increased scale and broader platform strengthening its position for a public listing, even though an IPO is not imminent.\n\nFraser added that the deal is a merger of equals rather than an acquisition"
+    },
+    {
+      "score": 0.15201993,
+      "host": "techcrunch.com",
+      "title": "Here are Latin America’s biggest startups based on valuation - TechCrunch",
+      "url": "https://techcrunch.com/2025/05/05/here-are-latin-americas-biggest-startups-based-on-valuation/",
+      "snippet": "Clip became a unicorn in 2021 following a $250 million round led by SoftBank and Viking, and maintained this status since then. The $100 million round it raised in June 2024 confirmed its $2 billion valuation as the company was “on the brink of profitability,” its CEO told Bloomberg.\n\nLoggi (2013): "
+    },
+    {
+      "score": 0.14717507,
+      "host": "techcrunch.com",
+      "title": "Ramp hits $32B valuation, just three months after hitting $22.5B - TechCrunch",
+      "url": "https://techcrunch.com/2025/11/17/ramp-hits-32b-valuation-just-three-months-after-hitting-22-5b/",
+      "snippet": "Prior to 2025, Ramp had previously raised in April 2024 a $150 million Series D co-led by Khosla and Founders Fund at a $7.65 valuation.\n\nWith Monday’s round, Ramp has raised $2.3 billion in total equity financing, it says. And in 2025 alone, the company leapt from being worth $13 billion to $32 bil"
+    },
+    {
+      "score": 0.12030463,
+      "host": "pitchbook.com",
+      "title": "Ramp raises fifth Founders Fund-led round as firms bet more within their portfolio - PitchBook",
+      "url": "https://pitchbook.com/news/articles/ramp-raises-200m-16b-fifth-founders-fund-round",
+      "snippet": "Headquartered in New York, Ramp issues corporate credit cards and offers a platform for expense management, travel booking and vendor procurement for large organizations.\n\nFounders Fund recently also doubled down on another one of its crown jewels, leading defense tech startup Anduril’s $1 billion S"
+    },
+    {
+      "score": 0.067898266,
+      "host": "pitchbook.com",
+      "title": "Global PE deals for November 11, 2025 - PitchBook",
+      "url": "https://pitchbook.com/newsletter/global-pe-deals-for-november-11-2025",
+      "snippet": "Clayton, Dubilier & Rice and Koerber are considering an acquisition of CVC Capital Partners-backed Syntegon, a German packaging machinery manufacturer that could be valued around €4 billion in a sale.   \n  \nBC Partners-backed insurance firm Davies Group acquired Canada-based SCM Insurance Services, "
+    },
+    {
+      "score": 0.042726286,
+      "host": "pitchbook.com",
+      "title": "With VC dealmaking down, startup buyers are filling the gap - PitchBook",
+      "url": "https://pitchbook.com/news/articles/with-vc-dealmaking-down-startup-buyers-are-filling-the-gap",
+      "snippet": "While funding totals have recovered this year, up 35% from 2024, VCs are spending selectively. Capital is becoming increasingly concentrated in fewer startups, as evidenced by the fact that the deal count currently trails last year’s by 15%.\n\nConsolidation is becoming an increasingly appealing optio"
+    },
+    {
+      "score": 0.04191884,
+      "host": "bloomberg.com",
+      "title": "Watch Wall Street Beat 02/24/2025 - Bloomberg",
+      "url": "https://www.bloomberg.com/news/videos/2025-02-24/wall-street-beat-02-24-2025",
+      "snippet": "Bloomberg Pursuits\n       Bloomberg Politics\n       Bloomberg Opinion\n       Bloomberg Businessweek\n       Bloomberg Live Conferences\n       Bloomberg Radio\n       Bloomberg Television\n       News Bureaus\n    \n    ### Media Services\n    \n       Bloomberg Media Distribution\n       Advertising\n    \n  "
+    },
+    {
+      "score": 0.032079544,
+      "host": "pitchbook.com",
+      "title": "Janus Henderson deal highlights asset managers’ fee compression battle - PitchBook",
+      "url": "https://pitchbook.com/news/articles/janus-henderson-deal-highlights-asset-managers-fee-compression-battle",
+      "snippet": "In the letter, Peltz, whose firm acquired a minority stake in Janus in October 2020, said that GC had established a “unique ecosystem of AI companies that can help improve” business operations and that Trian and GC had worked together extensively before. One portfolio company Peltz named was Percept"
+    },
+    {
+      "score": 0.028895615,
+      "host": "pitchbook.com",
+      "title": "Legal PE deals set records as investors seek AI challenger - PitchBook",
+      "url": "https://pitchbook.com/news/articles/legal-pe-deals-set-records-as-investors-seek-ai-challenger",
+      "snippet": "Law practices can also offer downside protection by generating stable, recurring revenue from long-term client relationships and the high demand for legal services.\n\nSome PE-backed firms have embraced the buy-and-build strategy as consolidation gathers pace in the industry.\n\nWaterland Private Equity"
+    }
+  ],
+  "hostDistribution": {
+    "broad": {
+      "pitchbook.com": 3,
+      "techcrunch.com": 4,
+      "amp.axios.com": 1,
+      "fintechfutures.com": 2,
+      "axios.com": 1,
+      "forbes.com": 1,
+      "ftadviser.com": 3,
+      "ainvest.com": 1,
+      "consultancy.uk": 1,
+      "forbes.com.au": 1
+    },
+    "scoped": {
+      "pitchbook.com": 8,
+      "techcrunch.com": 8,
+      "reuters.com": 1,
+      "bloomberg.com": 1
+    }
+  }
+}

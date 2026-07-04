@@ -1,13 +1,13 @@
 import { ChatOpenAI } from "@langchain/openai";
 import { env } from "@/config";
 
-// GPT-5 / o-series reject a non-default temperature (400). Drop it for those.
 const NO_TEMPERATURE_PREFIXES = ["gpt-5", "o1", "o3", "o4"];
+
 const bareId = (model: string): string => model.split("/").pop() ?? model;
+
 const acceptsTemperature = (model: string): boolean =>
   !NO_TEMPERATURE_PREFIXES.some((p) => bareId(model).startsWith(p));
 
-/** Build a chat model on the configured OpenAI-compatible endpoint. */
 export function createModel(
   { temperature = 0.2, maxTokens }: { temperature?: number; maxTokens?: number } = {},
 ): ChatOpenAI {
@@ -22,7 +22,6 @@ export function createModel(
   return new ChatOpenAI(opts);
 }
 
-/** Heuristic match for OpenAI "context length exceeded" style errors. */
 export function isTokenLimitExceeded(error: unknown): boolean {
   const err = error as { message?: string; code?: string };
   if (err?.code === "context_length_exceeded") return true;

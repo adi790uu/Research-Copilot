@@ -16,7 +16,6 @@ const planSchema = z.object({
   coverage_angles: z.array(z.string()).default([]),
 });
 
-/** Turn the approved mandate + objective into the brief the supervisor consumes. */
 function renderBrief(researchPlan: string, objective: string): string {
   const parsed = planSchema.safeParse(JSON.parse(researchPlan) as unknown);
   if (!parsed.success)
@@ -64,7 +63,6 @@ export const deepResearch = schemaTask({
       );
 
       if (!result.report) throw new Error("Graph produced no report");
-      // final_report stores the JSON-encoded ReportContent; sources mirror it.
       await updateJobResult(
         jobId,
         JSON.stringify(result.report),

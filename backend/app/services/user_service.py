@@ -14,7 +14,6 @@ class UserService:
     async def me(self, current_user: CurrentUser) -> User:
         row = await self._repo.get(current_user.id)
         if row is None:
-            # JWT was valid but the row is gone — treat as a stale token.
             raise UnauthorizedError("User no longer exists")
         await self._repo.touch_last_seen(current_user.id)
         await self._db.commit()

@@ -10,10 +10,6 @@ import {
   type Source,
 } from "@/db/schema";
 
-// Mirrors app/services/job_store.py. The Python approve endpoint creates the
-// job row before triggering the worker; the worker reads brief context and
-// writes progress/results back to the same tables.
-
 export type BriefContext = {
   companyName: string;
   website: string;
@@ -42,7 +38,6 @@ export async function updateJobStatus(jobId: string, status: string): Promise<vo
     .where(eq(researchJobs.id, jobId));
 }
 
-/** `finalReport` is the JSON-encoded ReportContent. */
 export async function updateJobResult(
   jobId: string,
   finalReport: string,
@@ -54,8 +49,6 @@ export async function updateJobResult(
     .where(eq(researchJobs.id, jobId));
 }
 
-/** Append a stage marker to the job's event log (e.g. research/report start),
- * so the UI can show an accurate, reload-safe status without inferring it. */
 export async function appendJobEvent(
   jobId: string,
   eventType: string,
@@ -72,14 +65,11 @@ export async function appendResearcherResult(
   summary: string,
   sources: Source[],
 ): Promise<void> {
-  // These tables set timestamps app-side (SQLAlchemy default=_utcnow), so there
-  // is no DB default — we must supply created_at/updated_at explicitly.
   await db
     .insert(researchJobResearchers)
     .values({ jobId, topic, summary, sources, createdAt: sql`now()` });
 }
 
-/** One row per ConductResearch dispatch; returns the generated task id. */
 export async function createTask(jobId: string, researchTopic: string): Promise<string> {
   const id = randomUUID();
   await db.insert(researchTasks).values({

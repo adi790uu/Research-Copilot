@@ -14,8 +14,6 @@ import { leadResearcherPrompt, todayStr } from "@/prompts";
 
 type Configurable = { jobId?: string };
 
-// Runs the supervisor subgraph seeded with the brief/plan, then surfaces its
-// notes + sources to the top-level state for the report node.
 async function researchSupervisorNode(
   state: Graph2State,
   config: LangGraphRunnableConfig,

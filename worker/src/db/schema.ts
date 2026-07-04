@@ -1,9 +1,6 @@
 import { bigserial, index, json, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 
-// Tables owned by the Python service's migrations. Mirrored here for typed
-// reads/writes only — never generate/push migrations from this file.
-
-export type SourceType = "company_site" | "web";
+export type SourceType = "company_site" | "web" | "linkedin" | "twitter" | "reddit" | "social";
 
 export type Source = {
   id: string;
@@ -14,7 +11,6 @@ export type Source = {
   type?: SourceType | null;
 };
 
-// Read-only: the worker pulls company context from the brief row.
 export const briefs = pgTable("briefs", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull(),
@@ -30,7 +26,6 @@ export const researchJobs = pgTable("research_jobs", {
   userId: text("user_id").notNull(),
   status: text("status").notNull().default("pending"),
   researchPlan: text("research_plan"),
-  // final_report holds the JSON-encoded ReportContent (summary + sections + sources).
   finalReport: text("final_report"),
   sources: json("sources").$type<Source[]>(),
   reportPdfKey: text("report_pdf_key"),

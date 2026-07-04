@@ -3,8 +3,6 @@ import { Annotation, messagesStateReducer } from "@langchain/langgraph";
 import type { Source } from "@/db/schema";
 import type { ReportContent } from "@/graph/report-schema";
 
-// Mirror of app/workflow/state.py's override_reducer: an update tagged
-// {type:"override"} replaces the channel; anything else is appended.
 type Override<T> = { type: "override"; value: T[] };
 
 function overrideReducer<T>(current: T[], update: T[] | Override<T>): T[] {
@@ -12,8 +10,6 @@ function overrideReducer<T>(current: T[], update: T[] | Override<T>): T[] {
   return current.concat(update as T[]);
 }
 
-// Sources dedupe by URL (matches _dedup_sources). Stable Source ids (sha1 of
-// URL) mean the same page from two researchers collapses to one entry.
 function dedupSources(current: Source[], update: Source[] | Override<Source>): Source[] {
   const isOverride = !Array.isArray(update) && update?.type === "override";
   const base = isOverride ? [] : current;
@@ -35,7 +31,6 @@ const sourcesChannel = Annotation<Source[], Source[] | Override<Source>>({
 
 const lastValueString = { reducer: (_: string, u: string) => u, default: () => "" };
 
-/** Supervisor subgraph state. */
 export const SupervisorAnnotation = Annotation.Root({
   supervisorMessages: Annotation<BaseMessage[]>({
     reducer: messagesStateReducer,
@@ -51,7 +46,6 @@ export const SupervisorAnnotation = Annotation.Root({
 });
 export type SupervisorState = typeof SupervisorAnnotation.State;
 
-/** Individual researcher subgraph state. */
 export const ResearcherAnnotation = Annotation.Root({
   researcherMessages: Annotation<BaseMessage[]>({
     reducer: messagesStateReducer,
@@ -68,7 +62,6 @@ export const ResearcherAnnotation = Annotation.Root({
 });
 export type ResearcherState = typeof ResearcherAnnotation.State;
 
-/** Top-level Graph 2 state. */
 export const Graph2Annotation = Annotation.Root({
   companyName: Annotation<string>(lastValueString),
   website: Annotation<string>(lastValueString),

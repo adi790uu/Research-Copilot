@@ -11,8 +11,10 @@ from app.workflow.state import AgentState, ResearchPlan
 
 
 async def create_research_plan(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
-    model = _create_model(temperature=0.0).with_structured_output(ResearchPlan).with_retry(
-        stop_after_attempt=3
+    model = (
+        _create_model(temperature=0.0)
+        .with_structured_output(ResearchPlan)
+        .with_retry(stop_after_attempt=3)
     )
 
     prompt = research_plan_prompt.format(
@@ -24,8 +26,6 @@ async def create_research_plan(state: AgentState, config: RunnableConfig) -> dic
     plan = cast(ResearchPlan, await model.ainvoke([HumanMessage(content=prompt)]))
 
     return {
-        # Serialise to a plain dict so the langgraph checkpointer doesn't have
-        # to deserialise an app-defined Pydantic type on resume.
         "research_plan": plan.model_dump(mode="json"),
         "messages": [AIMessage(content=plan.research_goal)],
     }

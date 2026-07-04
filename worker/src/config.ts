@@ -11,7 +11,6 @@ const envSchema = z.object({
 
 export const env = envSchema.parse(process.env);
 
-/** Orchestration limits — mirror research-copilot's workflow_* settings. */
 export const LIMITS = {
   MAX_CONCURRENT_RESEARCH_UNITS: 5,
   MAX_RESEARCHER_ITERATIONS: 4,

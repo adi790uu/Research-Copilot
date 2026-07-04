@@ -1,15 +1,3 @@
-"""Workflow + research-job HTTP endpoints.
-
-Two surfaces:
-
-* **Phase 1 chat** (`POST /briefs/{id}/chat`) — drives clarify → brief → plan
-  inline, streaming events as SSE until the graph pauses for clarification or
-  plan approval.
-* **Phase 2 jobs** — `POST /briefs/{id}/plan/approve` kicks off a background
-  `ResearchJob`; the frontend polls `GET /jobs/{id}` until the job is
-  `completed` or `failed`.
-"""
-
 from __future__ import annotations
 
 import json as _json
@@ -48,8 +36,6 @@ def _service(request: Request) -> WorkflowService:
     return request.app.state.workflow_service  # type: ignore[no-any-return]
 
 
-# ─── Phase 1: chat SSE ──────────────────────────────────────────────────────
-
 router = APIRouter(prefix="/briefs/{brief_id}", tags=["workflow"])
 
 
@@ -62,17 +48,9 @@ class ClarificationAnswer(BaseModel):
 
 
 class ChatTurn(BaseModel):
-    """One user turn in the phase-1 chat flow."""
-
     kind: ChatTurnKind
-    # The turn text appended to the graph history: the labeled
-    # Company/Website/Objective block on `start`, or the clarification answer on
-    # `answer`. None for `subscribe`.
     message: str | None = None
-    # Set when this turn answers the clarification questions — flips the brief's
-    # clarification gate to answered so the user isn't re-prompted.
     clarification_question_answered: bool = False
-    # The user's pick per question, stored against the brief's clarification.
     clarification_answers: list[ClarificationAnswer] | None = None
 
 
@@ -84,16 +62,6 @@ async def chat(
     user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
 ) -> StreamingResponse:
-    """SSE stream for the phase-1 portion of the workflow.
-
-    The body's `kind` advances the graph:
-      - `start`: seed the run with the labeled intro `message`.
-      - `answer`: append `message` as a new HumanMessage and re-drive.
-      - `subscribe`: tail the current run without injecting a turn.
-
-    The stream closes when the graph pauses (clarification_requested /
-    plan_ready) or fails.
-    """
     owned = await BriefRepository(db, user.id).get(brief_id)
     if owned is None:
         raise NotFoundError(f"Brief {brief_id} not found")
@@ -138,9 +106,6 @@ def _sse_format(event: WorkflowEvent) -> bytes:
     return f"event: {event.type}\ndata: {payload}\n\n".encode()
 
 
-# ─── Plan approval → trigger phase-2 worker ─────────────────────────────────
-
-
 @router.post("/plan/approve")
 async def approve_plan(
     brief_id: str,
@@ -148,19 +113,12 @@ async def approve_plan(
     user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
 ) -> dict:
-    """Create the research job and trigger the external worker.
-
-    Returns `{"job_id": ...}`; the frontend then polls `GET /jobs/{id}`.
-    """
     owned = await BriefRepository(db, user.id).get(brief_id)
     if owned is None:
         raise NotFoundError(f"Brief {brief_id} not found")
 
     job_id = await _service(request).approve_plan(brief_id=brief_id, user_id=user.id)
     return {"job_id": job_id}
-
-
-# ─── Brief-scoped reads ─────────────────────────────────────────────────────
 
 
 @router.get("/jobs")
@@ -182,7 +140,6 @@ async def get_latest_job(
     db: AsyncSession = Depends(get_db_session),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
-    """Convenience: the most recent job for this brief, or 404 if none."""
     owned = await BriefRepository(db, user.id).get(brief_id)
     if owned is None:
         raise NotFoundError(f"Brief {brief_id} not found")
@@ -192,12 +149,7 @@ async def get_latest_job(
     return job
 
 
-# ─── Chat history + follow-up over a finished report ───────────────────────
-
-
 class FollowupMessage(BaseModel):
-    """User turn for the post-report chat."""
-
     content: str = Field(min_length=1, max_length=4000)
 
 
@@ -208,9 +160,7 @@ async def list_brief_messages(
     db: AsyncSession = Depends(get_db_session),
     user: CurrentUser = Depends(get_current_user),
 ) -> list[dict]:
-    return await report_chat.list_messages(
-        db, brief_id=brief_id, user_id=user.id, kind=kind
-    )
+    return await report_chat.list_messages(db, brief_id=brief_id, user_id=user.id, kind=kind)
 
 
 @router.post("/messages")
@@ -221,11 +171,6 @@ async def post_brief_message(
     db: AsyncSession = Depends(get_db_session),
     user: CurrentUser = Depends(get_current_user),
 ) -> StreamingResponse:
-    """Stream a follow-up reply token-by-token.
-
-    SSE frames: `event: token\\ndata: <text>\\n\\n` per chunk,
-    `event: done\\ndata: {}\\n\\n` when the reply is complete.
-    """
 
     async def generator() -> AsyncIterator[bytes]:
         try:
@@ -240,7 +185,6 @@ async def post_brief_message(
                 yield f"event: token\ndata: {_sse_escape(chunk)}\n\n".encode()
             yield b"event: done\ndata: {}\n\n"
         except Exception as exc:  # noqa: BLE001
-            # Surface the error inline so the frontend can render it.
             msg = str(exc).replace("\n", " ")
             yield f"event: error\ndata: {msg}\n\n".encode()
 
@@ -256,12 +200,8 @@ async def post_brief_message(
 
 
 def _sse_escape(text: str) -> str:
-    # SSE `data:` lines can't contain raw newlines — split into multiple
-    # `data:` continuation lines per the spec.
     return text.replace("\r\n", "\n").replace("\n", "\ndata: ")
 
-
-# ─── Job-scoped reads ───────────────────────────────────────────────────────
 
 jobs_router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -271,7 +211,6 @@ async def _job_or_404(job_id: str, user_id: str) -> dict:
     if job is None:
         raise NotFoundError(f"Job {job_id} not found")
     if job.get("user_id") != user_id:
-        # Treat ownership mismatch as 404 — don't leak existence.
         raise NotFoundError(f"Job {job_id} not found")
     return job
 
@@ -322,13 +261,8 @@ async def get_job_report_pdf(
     if not raw_report:
         raise NotFoundError(f"Job {job_id} has no final report yet")
 
-    # research_jobs.final_report is the JSON-encoded ReportContent that the
-    # worker wrote. Parse it back into a typed Report so pdf_export can render
-    # the dynamically-structured report template.
     try:
-        content_dict = (
-            raw_report if isinstance(raw_report, dict) else _json.loads(raw_report)
-        )
+        content_dict = raw_report if isinstance(raw_report, dict) else _json.loads(raw_report)
         content = ReportContent.model_validate(content_dict)
     except (ValueError, _json.JSONDecodeError) as exc:
         log.error("report_payload_corrupt", job_id=job_id, error=str(exc))

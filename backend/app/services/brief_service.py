@@ -7,10 +7,6 @@ from app.persistence.repositories import BriefRepository
 
 
 class BriefService:
-    """Brief CRUD scoped to one user. The auth dependency already proves the
-    user exists; nothing here re-validates that — if the FK insert fails that's
-    a real bug, not a missing user."""
-
     def __init__(self, db: AsyncSession, user: CurrentUser) -> None:
         self._db = db
         self._user = user

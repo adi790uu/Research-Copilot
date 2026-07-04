@@ -1,6 +1,3 @@
-// Prompts for Graph 2, ported from research-copilot/backend/app/workflow/prompts.py
-// (the supervisor / researcher / compression / report prompts). Company-anchored.
-
 export const todayStr = (): string =>
   new Date().toLocaleDateString("en-US", {
     weekday: "short",
@@ -22,7 +19,7 @@ Today's date is ${args.date}.
 
 ## Your tools
 
-1. **ConductResearch** — Dispatch a research task to a sub-agent. Provide complete, standalone instructions; the researcher cannot see the mandate or other researchers' work. Always specify \`tools_to_use\` (company_site / web / both) — YOU choose, based on where the answer likely lives.
+1. **ConductResearch** — Dispatch a research task to a sub-agent. Provide complete, standalone instructions; the researcher cannot see the mandate or other researchers' work. Always specify \`tools_to_use\` (company_site / web / social / both) — YOU choose, based on where the answer likely lives.
 2. **ResearchComplete** — Call when coverage is sufficient. Stop calling new researchers once you can write a full report.
 3. **think_tool** — Reason through decisions. Use when evaluating results or identifying gaps. Don't ritualise it.
 
@@ -30,7 +27,8 @@ Today's date is ${args.date}.
 
 ### Round 1 — decompose the mandate
 The coverage angles are seeds, not a fixed list: merge, split, drop, or add angles to best serve the goal. Emit one ConductResearch call per task you decide to run:
-- Choose \`tools_to_use\` per task (company_site for the company's own pages; web for external news/funding/reviews; both when it needs both).
+- Choose \`tools_to_use\` per task (company_site for the company's own pages; web for external news/funding/reviews; social for LinkedIn/X presence and Reddit sentiment/reviews; both for a mix). Social has thin coverage for smaller companies — prefer it for sentiment, reputation, and headcount/leadership angles.
+- **Funding** (rounds, investors, valuation, acquisitions) is a distinct, high-signal angle when relevant — dispatch it as its own task routed to \`web\`. Web search anchors on what the company does automatically, so a smaller/lesser-known company that has raised will still surface; if nothing comes back, treat "no funding coverage" as a finding, not a failure.
 - Write standalone instructions: ALWAYS name the company and what to investigate. Anchor every query to ${args.companyName}.
 
 Up to ${args.maxConcurrentResearchUnits} researchers run in parallel per round. Queue the rest.
@@ -99,27 +97,30 @@ export function compressResearchSystemPrompt(args: { companyName: string; date: 
 
 Today's date is ${args.date}.
 
+## Citations — read carefully
+Every SOURCE block you were given is headed with a stable citation id, e.g. \`--- SOURCE src_ab12cd34: … ---\`. Cite facts using that EXACT id in square brackets: \`[src_ab12cd34]\`. A fact backed by several sources cites each: \`[src_ab12cd34][src_ef56gh78]\`. Never renumber sources as [1], [2]; never invent an id that wasn't in a SOURCE header.
+
 ## What to do
 1. **Preserve every fact, number, date, name, and quote.** When in doubt, keep it.
-2. **Deduplicate.** If multiple sources say the same thing, consolidate: "Multiple sources [1][2] confirm that X."
+2. **Deduplicate.** If multiple sources say the same thing, consolidate: "Multiple sources [src_ab12cd34][src_ef56gh78] confirm that X."
 3. **Organise by theme.** Group related findings under clear headings.
-4. **Maintain inline citations.** Every factual claim references its source as [N].
-5. **Flag contradictions.** Note both positions and their sources.
+4. **Cite every factual claim** with the exact \`[src_xxxxxxxx]\` id(s) of the source(s) that support it.
+5. **Flag contradictions.** Note both positions and their source ids.
 6. **Tag company-site vs external.** When a fact comes from the company's own website, note "(company site)".
 
 ## Output structure
 ### Key Findings
-Organised by theme. Each finding cited [N].
+Organised by theme. Every factual sentence ends with one or more \`[src_xxxxxxxx]\` citations.
 ### Gaps and Limitations
 What the researcher could NOT find.
 ### Sources
-Sequential numbered list with NO gaps:
-[1] Title — URL
+One line per source you cited, using its exact id:
+[src_xxxxxxxx] Title — URL
 
 ## Rules
 - Start your output directly with the \`### Key Findings\` heading. No preamble, no "Below I have…" intro, no description of what you did or how you organised it.
-- Number sources sequentially from 1, no gaps. Every claim has a citation. Every source found appears in the list.
-- Do NOT paraphrase into vagueness — keep specifics. Do NOT invent information. Length is fine — completeness beats brevity.`;
+- Use the exact \`[src_xxxxxxxx]\` ids from the SOURCE headers. Every factual sentence has at least one citation; every id you cite appears in the Sources list.
+- Do NOT paraphrase into vagueness — keep specifics. Do NOT invent information or citation ids. Length is fine — completeness beats brevity.`;
 }
 
 export const compressResearchHumanMessage = (companyName: string): string =>
@@ -159,11 +160,14 @@ There is NO fixed template. Decide the sections that best deliver on the researc
 
 Let the material drive the structure: cover what matters for the mandate, in the order that reads best. Fold genuine gaps into the relevant section or a dedicated "Open questions / unknowns" section rather than padding.
 
+## Citations — the findings already carry them
+Facts in <findings> are already tagged with the citation id of the source that backs them, e.g. \`[src_ab12cd34]\`. Your job is to CARRY THOSE IDS THROUGH: when you state a fact, copy the exact id(s) attached to it in the findings. Do not renumber, reassign, or invent ids. Put every id you cite in that section's \`source_ids\`.
+
 ## Rules
-- Write about ${args.companyName} itself — its business, products, customers, and signals. NEVER describe the research process, the findings corpus, or the source list. Banned phrasings include "compiled findings", "cleaned findings", "initial extraction", "source list", "field notes". State each fact directly and cite it, e.g. "Zylabs positions itself as 'Deal engineering for B2B sales teams' [src_xxxxxxxx]" — not "the findings describe Zylabs' positioning".
-- Every factual claim is grounded in a finding above. Do NOT invent facts.
+- Write about ${args.companyName} itself — its business, products, customers, and signals. NEVER describe the research process, the findings corpus, or the source list. Banned phrasings include "compiled findings", "cleaned findings", "initial extraction", "source list", "field notes". State each fact directly and cite it, e.g. "Zylabs positions itself as 'Deal engineering for B2B sales teams' [src_ab12cd34]" — not "the findings describe Zylabs' positioning".
+- **Every factual sentence ends with at least one \`[src_xxxxxxxx]\` citation.** If no finding supports a statement, cut it or hedge it explicitly — never leave a bare factual claim uncited, and never invent an id.
 - If evidence for something is thin, say so honestly in a sentence or two; do not manufacture detail.
-- Citations use the EXACT source IDs from the sources block. Do not invent IDs.`;
+- Citations use the EXACT ids present in <findings> / the sources block. Do not invent IDs.`;
 }
 
 export function reviewReportPrompt(args: {
@@ -190,6 +194,6 @@ Today's date is ${args.date}.
 Return the polished report in the same shape (\`summary\` + \`sections\` of \`heading\` / \`content\` / \`source_ids\`). You must:
 1. Keep every grounded claim. Do NOT invent facts. You may reorder, merge, or split sections if it reads better, but do not drop substance.
 2. Tighten prose — kill filler, fix transitions, remove any self-referential language about the research process.
-3. Firm up grounding: where the findings support a claim that cited nothing, add the correct \`[src_xxxxxxxx]\` citation. Drop any citation whose ID isn't in the available list.
+3. **Firm up grounding — this is the priority.** Every factual sentence must end with at least one \`[src_xxxxxxxx]\` citation. Where <findings> support a currently-uncited claim, add the correct id. Where a claim has no support in <findings>, cut it or hedge it. Drop any citation whose id isn't in the available list, and keep each section's \`source_ids\` equal to the ids actually cited in its prose.
 4. \`content\` is prose about ${args.companyName} and nothing else. NEVER restate these instructions or describe the task.`;
 }

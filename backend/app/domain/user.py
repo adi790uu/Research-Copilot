@@ -23,16 +23,11 @@ class ActivitySummary(BaseModel):
 
 
 class Credentials(BaseModel):
-    """Inbound payload for `/auth/sign-up` and `/auth/sign-in`."""
-
     email: EmailStr
     password: str = Field(min_length=8, max_length=200)
 
 
 class AuthResponse(BaseModel):
-    """Returned from sign-up / sign-in. The frontend stores the token and
-    sends it as `Authorization: Bearer …` on every subsequent request."""
-
     access_token: str
     token_type: str = "bearer"
     user: User

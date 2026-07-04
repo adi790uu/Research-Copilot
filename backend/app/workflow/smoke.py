@@ -1,15 +1,3 @@
-"""Workflow smoke runner.
-
-Usage:
-    python -m app.workflow.smoke "Acme Corp" \\
-        --website https://acme.example.com \\
-        --objective "Evaluate as integration partner"
-
-Drives Graph 1 (clarify → brief → plan) end-to-end. The model is read from
-config (`OPENAI_API_KEY` / `OPENAI_MODEL`); with no key set the ChatOpenAI
-calls will fail, so point it at a real key or a local Models endpoint.
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -24,13 +12,11 @@ from app.workflow.graph import build_graph
 
 
 async def _run(args: argparse.Namespace) -> dict[str, Any]:
-    # In-memory checkpointer so the run can resume past the plan interrupt.
     graph = build_graph(checkpointer=MemorySaver())
 
     config = {
         "configurable": {
             "thread_id": "smoke",
-            # Disable clarification for smoke runs so we always reach the plan.
             "allow_clarification": False,
         }
     }

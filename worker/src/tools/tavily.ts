@@ -1,8 +1,5 @@
 import { env } from "@/config";
 
-// Minimal Tavily REST client (search / extract / map) — mirrors the subset of
-// app/providers/search/tavily.py the research tools use. No SDK dependency.
-
 const BASE = "https://api.tavily.com";
 
 async function post<T>(path: string, body: Record<string, unknown>): Promise<T> {
@@ -24,9 +21,10 @@ export type SearchResult = {
   title: string;
   snippet: string;
   content: string | null;
+  score: number;
 };
 
-type RawSearchHit = { url: string; title?: string; content?: string; raw_content?: string };
+type RawSearchHit = { url: string; title?: string; content?: string; raw_content?: string; score?: number };
 
 export async function tavilySearch(
   query: string,
@@ -51,6 +49,7 @@ export async function tavilySearch(
     title: r.title ?? r.url,
     snippet: (r.content ?? "").slice(0, 400),
     content: r.raw_content ?? r.content ?? null,
+    score: r.score ?? 0,
   }));
 }
 

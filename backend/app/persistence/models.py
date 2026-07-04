@@ -21,9 +21,7 @@ class UserORM(Base):
     __tablename__ = "users"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=_uuid)
-    email: Mapped[str] = mapped_column(
-        String(320), nullable=False, unique=True, index=True
-    )
+    email: Mapped[str] = mapped_column(String(320), nullable=False, unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow
@@ -43,13 +41,6 @@ class UserORM(Base):
 
 
 class BriefORM(Base):
-    """A brief IS a chat thread. `id` is the LangGraph thread_id.
-
-    Conversation messages live both in the LangGraph checkpointer and the
-    `messages` table. `clarification_question` holds the gate's questions plus
-    an `answered` flag so we don't re-prompt the user on reload.
-    """
-
     __tablename__ = "briefs"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
@@ -64,7 +55,6 @@ class BriefORM(Base):
     objective: Mapped[str] = mapped_column(Text, nullable=False)
     title: Mapped[str] = mapped_column(String(200), nullable=False, default="New research")
     status: Mapped[str] = mapped_column(String(40), nullable=False, default="pending")
-    # {"answered": bool, "questions": [...]} — null until the gate asks.
     clarification_question: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow
@@ -89,8 +79,6 @@ class BriefORM(Base):
 
 
 class MessageORM(Base):
-    """Chat turns for a brief: phase-1 intro/clarification plus post-report follow-ups."""
-
     __tablename__ = "messages"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
@@ -100,10 +88,10 @@ class MessageORM(Base):
         nullable=False,
         index=True,
     )
-    role: Mapped[str] = mapped_column(String(16), nullable=False)  # 'user' | 'assistant'
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
     kind: Mapped[str] = mapped_column(
         String(16), nullable=False, server_default="followup", index=True
-    )  # 'workflow' (phase-1 flow) | 'followup' (post-report chat)
+    )
     content: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow

@@ -1,13 +1,3 @@
-"""Report → HTML → PDF rendering.
-
-Renders a `ReportContent` (summary + dynamically-chosen sections + sources)
-as a print-styled, self-contained HTML document and then asks WeasyPrint to
-hand it back as PDF bytes.
-
-WeasyPrint is loaded lazily so a missing Pango/Cairo on macOS doesn't take
-the rest of the app down — the endpoint surfaces a clear 503 instead.
-"""
-
 from __future__ import annotations
 
 import ctypes.util
@@ -21,7 +11,6 @@ from app.domain.report import Report, ReportSection, Source
 
 
 def _bootstrap_native_libs() -> None:
-    """Make WeasyPrint's Pango/Cairo loads work on macOS + Homebrew."""
     if platform.system() != "Darwin":
         return
 
@@ -47,7 +36,7 @@ _bootstrap_native_libs()
 
 
 class PDFRenderError(RuntimeError):
-    """Raised when WeasyPrint or its native deps can't render."""
+    pass
 
 
 _CITATION_RE = re.compile(r"\[([a-zA-Z0-9_,\s-]+)\]")
@@ -59,15 +48,12 @@ def render_report_html(
     company_name: str,
     objective: str,
 ) -> str:
-    """Produce a print-styled, self-contained HTML document for the report."""
     sources = report.content.sources
     sections = report.content.sections
     src_index: dict[str, int] = {s.id: i + 1 for i, s in enumerate(sources)}
 
     body_parts: list[str] = [
-        _cover_html(
-            company_name, objective, report.created_at, len(sources), len(sections)
-        ),
+        _cover_html(company_name, objective, report.created_at, len(sources), len(sections)),
     ]
     if report.content.summary.strip():
         body_parts.append(_summary_html(report.content.summary, src_index))
@@ -89,7 +75,6 @@ def report_to_pdf(
     company_name: str,
     objective: str,
 ) -> bytes:
-    """Render the report to a PDF byte string."""
     try:
         from weasyprint import HTML  # type: ignore[import-untyped]
     except OSError as exc:  # pragma: no cover — env-dependent
@@ -102,15 +87,8 @@ def report_to_pdf(
     except Exception as exc:  # pragma: no cover
         raise PDFRenderError(f"WeasyPrint import failed: {exc}") from exc
 
-    html_str = render_report_html(
-        report, company_name=company_name, objective=objective
-    )
+    html_str = render_report_html(report, company_name=company_name, objective=objective)
     return HTML(string=html_str).write_pdf()
-
-
-# ---------------------------------------------------------------------------
-# Section / cover renderers
-# ---------------------------------------------------------------------------
 
 
 def _cover_html(
@@ -202,14 +180,9 @@ def _sources_html(sources: list[Source], ordinal: str) -> str:
     return f"""
 <section class="sources">
   <h2><span class="ord">{ordinal}</span><span class="t">Sources</span></h2>
-  <ol class="src-list">{''.join(items)}</ol>
+  <ol class="src-list">{"".join(items)}</ol>
 </section>
 """
-
-
-# ---------------------------------------------------------------------------
-# Text helpers
-# ---------------------------------------------------------------------------
 
 
 def _render_paragraphs(text: str, src_index: dict[str, int]) -> str:
@@ -220,7 +193,6 @@ def _render_paragraphs(text: str, src_index: dict[str, int]) -> str:
 
 
 def _render_text(text: str, src_index: dict[str, int]) -> str:
-    """Escape + transform [src_…] markers into superscript citation chips."""
     out: list[str] = []
     last = 0
     for m in _CITATION_RE.finditer(text):
@@ -241,15 +213,12 @@ def _render_text(text: str, src_index: dict[str, int]) -> str:
 def _pretty_host(url: str) -> str:
     try:
         from urllib.parse import urlparse
+
         host = urlparse(url).hostname or url
         return host[4:] if host.startswith("www.") else host
     except Exception:
         return url
 
-
-# ---------------------------------------------------------------------------
-# HTML + CSS templates
-# ---------------------------------------------------------------------------
 
 _DOC_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">

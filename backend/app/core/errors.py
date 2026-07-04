@@ -7,8 +7,6 @@ log = get_logger(__name__)
 
 
 class AppError(Exception):
-    """Base class for expected, user-facing errors."""
-
     status_code: int = 400
     code: str = "app_error"
 
@@ -32,8 +30,6 @@ class ValidationError(AppError):
 
 
 class ProviderError(AppError):
-    """LLM, search, or other external provider failure."""
-
     status_code = 502
     code = "provider_error"
 

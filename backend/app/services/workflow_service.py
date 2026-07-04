@@ -1,18 +1,3 @@
-"""Orchestrates a company-research run.
-
-Two phases:
-
-1. **Phase 1 (foreground)** — clarify → brief → plan. Drives the graph inline
-   so the caller can stream events out as SSE. Phase 1 is message-driven: the
-   caller passes the user's turn as text (the first turn is the labeled
-   Company/Website/Objective block built client-side); everything else lives in
-   the LangGraph checkpoint, so we never read the brief row here.
-
-2. **Phase 2 (external worker)** — supervisor + researchers + report. Kicked off
-   by `approve_plan`, which creates a `ResearchJob` row and triggers the
-   TypeScript Trigger.dev worker. The frontend polls `/jobs/{id}` until done.
-"""
-
 from __future__ import annotations
 
 import json
@@ -54,15 +39,10 @@ _PHASE1_NODES = {
 
 
 class WorkflowService:
-    """One instance per process; bound to app.state."""
-
     def __init__(self, *, checkpointer: BaseCheckpointSaver) -> None:
         self._checkpointer = checkpointer
 
-    # ----- builders ---------------------------------------------------------
-
     def _build(self, *, brief_id: str) -> tuple[Any, RunnableConfig]:
-        """Build the LangGraph + RunnableConfig for a brief thread."""
         settings = get_settings()
         graph = build_graph(checkpointer=self._checkpointer)
         config: RunnableConfig = {
@@ -72,8 +52,6 @@ class WorkflowService:
             }
         }
         return graph, config
-
-    # ----- persistence helpers ---------------------------------------------
 
     async def _set_status(self, *, brief_id: str, user_id: str, status: str) -> None:
         sessionmaker = get_sessionmaker()
@@ -90,32 +68,22 @@ class WorkflowService:
         clarification_answered: bool = False,
         clarification_answers: list[dict] | None = None,
     ) -> None:
-        """Store the user message and, when this turn answers the clarification,
-        flip + record the answers on the brief — all in one transaction so the
-        messages table and the brief's clarification JSON can't diverge."""
         sessionmaker = get_sessionmaker()
         async with sessionmaker() as db:
-            await MessageRepository(db, brief_id).add(
-                role="user", content=content, kind="workflow"
-            )
+            await MessageRepository(db, brief_id).add(role="user", content=content, kind="workflow")
             if clarification_answered:
                 await BriefRepository(db, user_id).mark_clarification_answered(
                     brief_id, clarification_answers
                 )
             await db.commit()
 
-    async def _store_clarification(self, *, brief_id: str, user_id: str, questions: list[dict]) -> None:
-        """Persist the gate's questions on the brief (answered=false).
-
-        The clarification is structured state on the brief, not a chat message —
-        the frontend renders it from `brief.clarification_question`.
-        """
+    async def _store_clarification(
+        self, *, brief_id: str, user_id: str, questions: list[dict]
+    ) -> None:
         sessionmaker = get_sessionmaker()
         async with sessionmaker() as db:
             await BriefRepository(db, user_id).set_clarification_question(brief_id, questions)
             await db.commit()
-
-    # ----- phase 1 (foreground) --------------------------------------------
 
     async def run_phase1(
         self,
@@ -126,16 +94,6 @@ class WorkflowService:
         clarification_answered: bool = False,
         clarification_answers: list[dict] | None = None,
     ) -> AsyncIterator[WorkflowEvent]:
-        """Drive phase 1 (clarify → brief → plan), yielding events as they happen.
-
-        `message` is the user's turn appended to the checkpointed history:
-        - The labeled Company/Website/Objective block on the first turn.
-        - A clarification answer on later turns.
-        - `None` to subscribe/resume without injecting a turn.
-
-        When `clarification_answered` is set, the brief's clarification gate is
-        flipped to answered so the user isn't re-prompted.
-        """
         graph, config = self._build(brief_id=brief_id)
         await self._set_status(brief_id=brief_id, user_id=user_id, status="running")
 
@@ -161,15 +119,7 @@ class WorkflowService:
             store_clarification=self._store_clarification,
         )
 
-    # ----- phase 2 (external worker) ---------------------------------------
-
     async def approve_plan(self, *, brief_id: str, user_id: str) -> str:
-        """Create a ResearchJob and trigger the external worker. Returns job_id.
-
-        Reads the approved plan off the checkpoint, persists it on a new job
-        row, then dispatches the Trigger.dev worker. If dispatch fails the job
-        is marked failed so the caller sees a clear error.
-        """
         graph, config = self._build(brief_id=brief_id)
 
         snapshot = await graph.aget_state(config)
@@ -197,9 +147,6 @@ class WorkflowService:
         return job_id
 
 
-# ---------- phase-1 streaming generator -------------------------------------
-
-
 async def _phase1_event_iter(
     *,
     graph: Any,
@@ -210,12 +157,6 @@ async def _phase1_event_iter(
     set_status: Any,
     store_clarification: Any,
 ) -> AsyncIterator[WorkflowEvent]:
-    """Stream phase-1 events from the LangGraph.
-
-    Tails `astream(stream_mode="updates")`, emitting a NodeStarted +
-    NodeCompleted pair per phase-1 node. Stops when the graph pauses for
-    clarification, when the plan is ready, or on error.
-    """
     yield RunStarted(brief_id=brief_id)
     started = time.perf_counter()
     clarification_emitted = False
@@ -259,7 +200,6 @@ async def _phase1_event_iter(
         yield RunFailed(brief_id=brief_id, message=str(exc))
         return
 
-    # Stream ended — figure out where we landed.
     try:
         snapshot = await graph.aget_state(config)
     except Exception as exc:  # noqa: BLE001
@@ -272,9 +212,7 @@ async def _phase1_event_iter(
 
     plan = values.get("research_plan")
     if plan:
-        await set_status(
-            brief_id=brief_id, user_id=user_id, status="awaiting_plan_approval"
-        )
+        await set_status(brief_id=brief_id, user_id=user_id, status="awaiting_plan_approval")
         yield PlanReady(brief_id=brief_id, plan=plan)
         return
 

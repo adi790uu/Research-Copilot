@@ -24,9 +24,7 @@ class UserRepository:
         return result.scalar_one_or_none()
 
     async def get_by_email(self, email: str) -> UserORM | None:
-        result = await self._db.execute(
-            select(UserORM).where(UserORM.email == email.lower())
-        )
+        result = await self._db.execute(select(UserORM).where(UserORM.email == email.lower()))
         return result.scalar_one_or_none()
 
     async def create(self, *, email: str, password_hash: str) -> UserORM:
@@ -65,9 +63,6 @@ class UserRepository:
 
 
 class BriefRepository:
-    """All brief reads/writes are scoped to a user_id. Cross-user access
-    returns nothing — the service translates that to a 404."""
-
     def __init__(self, db: AsyncSession, user_id: str) -> None:
         self._db = db
         self._user_id = user_id
@@ -104,13 +99,9 @@ class BriefRepository:
         )
         return result.scalar_one_or_none()
 
-    async def list(
-        self, *, limit: int = 50, offset: int = 0
-    ) -> tuple[Sequence[BriefORM], int]:
+    async def list(self, *, limit: int = 50, offset: int = 0) -> tuple[Sequence[BriefORM], int]:
         total = await self._db.scalar(
-            select(func.count())
-            .select_from(BriefORM)
-            .where(BriefORM.user_id == self._user_id)
+            select(func.count()).select_from(BriefORM).where(BriefORM.user_id == self._user_id)
         )
         result = await self._db.execute(
             select(BriefORM)
@@ -136,7 +127,6 @@ class BriefRepository:
         row = await self.get(brief_id)
         if row is None:
             return None
-        # A re-emit (reload/subscribe) must not wipe answers already given.
         if row.clarification_question and row.clarification_question.get("answered"):
             return row
         row.clarification_question = {"answered": False, "questions": questions}
@@ -146,8 +136,6 @@ class BriefRepository:
     async def mark_clarification_answered(
         self, brief_id: str, answers: list[dict] | None = None
     ) -> BriefORM | None:
-        """Flip the gate to answered and, when provided, store each user answer
-        against its question (matched by question text)."""
         row = await self.get(brief_id)
         if row is None or not row.clarification_question:
             return row
@@ -155,8 +143,7 @@ class BriefRepository:
         if answers:
             by_question = {a["question"]: a["answer"] for a in answers}
             cq["questions"] = [
-                {**q, "answer": by_question.get(q.get("question"))}
-                for q in cq.get("questions", [])
+                {**q, "answer": by_question.get(q.get("question"))} for q in cq.get("questions", [])
             ]
         row.clarification_question = cq
         flag_modified(row, "clarification_question")
@@ -165,9 +152,6 @@ class BriefRepository:
 
 
 class MessageRepository:
-    """Chat history for a brief. Scoped to a brief_id — callers are expected
-    to have already verified ownership via BriefRepository."""
-
     def __init__(self, db: AsyncSession, brief_id: str) -> None:
         self._db = db
         self._brief_id = brief_id
@@ -180,9 +164,7 @@ class MessageRepository:
         return result.scalars().all()
 
     async def add(self, *, role: str, content: str, kind: str) -> MessageORM:
-        row = MessageORM(
-            brief_id=self._brief_id, role=role, content=content, kind=kind
-        )
+        row = MessageORM(brief_id=self._brief_id, role=role, content=content, kind=kind)
         self._db.add(row)
         await self._db.flush()
         await self._db.refresh(row)

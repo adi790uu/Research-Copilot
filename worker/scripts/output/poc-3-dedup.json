@@ -1,0 +1,23 @@
+{
+  "meta": {
+    "company": "Stripe",
+    "generatedAt": "2026-07-03T12:51:27.284Z"
+  },
+  "counts": {
+    "raw": 18,
+    "uniqueByUrl": 17,
+    "uniqueByCanonAndContent": 15
+  },
+  "identicalContentGroups": [
+    {
+      "hash": "12bfbb1a6b62",
+      "count": 4,
+      "urls": [
+        "https://www.linkedin.com/company/stripe",
+        "https://www.linkedin.com/company/stripe/jobs",
+        "https://www.linkedin.com/company/stripe/life",
+        "https://www.linkedin.com/company/stripe/jobs"
+      ]
+    }
+  ]
+}

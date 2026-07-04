@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import {
   AIMessage,
   type BaseMessage,
@@ -15,7 +14,8 @@ import {
   StateGraph,
 } from "@langchain/langgraph";
 import { LIMITS } from "@/config";
-import type { Source, SourceType } from "@/db/schema";
+import type { Source } from "@/db/schema";
+import { parseSourceBlocks } from "@/graph/sources";
 import { ResearcherAnnotation, type ResearcherState } from "@/graph/state";
 import { createModel, isTokenLimitExceeded } from "@/llm/models";
 import {
@@ -24,54 +24,44 @@ import {
   researcherSystemPrompt,
   todayStr,
 } from "@/prompts";
-import { companySiteSearch, webCompanySearch } from "@/tools/company-search";
+import { companySiteSearch, socialSearch, webCompanySearch } from "@/tools/company-search";
 import { thinkTool } from "@/tools/think";
 
-// "--- SOURCE N: title --- / URL: ... / Type: ..." — emitted by the company tools.
-const SOURCE_RE = /--- SOURCE \d+: (.+?) ---\nURL: (\S+)\nType: (\w+)\n/g;
-
-const sourceId = (url: string): string => `src_${createHash("sha1").update(url).digest("hex").slice(0, 8)}`;
-
-function normalizeType(t: string): SourceType | null {
-  const s = t.trim().toLowerCase();
-  return s === "company_site" || s === "web" ? s : null;
-}
-
 function extractSources(messages: BaseMessage[]): Source[] {
-  const seen = new Set<string>();
-  const sources: Source[] = [];
-  for (const msg of messages) {
-    if (!(msg instanceof ToolMessage)) continue;
-    const content = typeof msg.content === "string" ? msg.content : "";
-    for (const [, title, url, stype] of content.matchAll(SOURCE_RE)) {
-      if (seen.has(url)) continue;
-      seen.add(url);
-      sources.push({ id: sourceId(url), url: url.trim(), title: title.trim(), type: normalizeType(stype) });
-    }
-  }
-  return sources;
+  const toolText = messages
+    .filter((m) => m instanceof ToolMessage)
+    .map((m) => (typeof m.content === "string" ? m.content : ""))
+    .join("\n");
+  return parseSourceBlocks(toolText);
 }
 
 function selectTools(toolsToUse: string): StructuredToolInterface[] {
   if (toolsToUse === "company_site") return [companySiteSearch, thinkTool];
   if (toolsToUse === "web") return [webCompanySearch, thinkTool];
-  return [companySiteSearch, webCompanySearch, thinkTool];
+  if (toolsToUse === "social") return [socialSearch, thinkTool];
+  return [companySiteSearch, webCompanySearch, socialSearch, thinkTool];
 }
 
 function renderToolsSection(tools: StructuredToolInterface[]): { section: string; routing: string } {
   const names = tools.map((t) => t.name);
   const lines = tools.map((t, i) => {
+    const n = i + 1;
     if (t.name === "company_site_search")
-      return `${i + 1}. company_site_search: scrape the company's own website (about, products, blog, pricing).`;
+      return `${n}. company_site_search: scrape the company's own website (about, products, blog, pricing).`;
     if (t.name === "web_company_search")
-      return `${i + 1}. web_company_search: external sources (news, funding, reviews). Company name is prepended automatically.`;
-    return `${i + 1}. think_tool: short reflection on findings or next steps. Do not call in parallel with other tools.`;
+      return `${n}. web_company_search: external sources (news, funding, reviews). Company name is prepended automatically.`;
+    if (t.name === "social_search")
+      return `${n}. social_search: the company's verified LinkedIn and X (Twitter) profiles plus Reddit and other public discussion (sentiment, reviews, employee experience). Company name is prepended automatically.`;
+    return `${n}. think_tool: short reflection on findings or next steps. Do not call in parallel with other tools.`;
   });
+  const search = names.filter((n) => n !== "think_tool");
   let routing: string;
-  if (names.includes("company_site_search") && names.includes("web_company_search"))
-    routing = "Use BOTH company_site_search and web_company_search. Start on the company site for grounding, then go external for signals.";
-  else if (names.includes("company_site_search"))
+  if (search.length > 1)
+    routing = `Use ${search.join(", ")} — route each query to the source most likely to hold the answer. Start on the company site for grounding, then go external for signals and to social_search for sentiment.`;
+  else if (search[0] === "company_site_search")
     routing = "Use company_site_search for every query. Stay on the company's own pages.";
+  else if (search[0] === "social_search")
+    routing = "Use social_search for every query. It covers the company's social profiles and public discussion; the company name is anchored automatically.";
   else routing = "Use web_company_search for every query. The company name is anchored automatically.";
   return { section: lines.join("\n"), routing };
 }

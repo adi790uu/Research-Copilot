@@ -1,9 +1,6 @@
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 
-// Supervisor delegation tools. Bodies are unused — they exist as schemas to
-// bind to the supervisor model; dispatch is handled in supervisorTools.
-
 export const conductResearch = tool(async () => "", {
   name: "ConductResearch",
   description:
@@ -12,7 +9,11 @@ export const conductResearch = tool(async () => "", {
     research_topic: z
       .string()
       .describe("Detailed, standalone research instructions. Name the company and what good output looks like."),
-    tools_to_use: z.enum(["company_site", "web", "both"]).describe("company_site | web | both."),
+    tools_to_use: z
+      .enum(["company_site", "web", "social", "both"])
+      .describe(
+        "company_site (the company's own site) | web (external news/funding/reviews) | social (LinkedIn/X profiles + Reddit discussion & sentiment) | both (company_site + web + social).",
+      ),
   }),
 });
 

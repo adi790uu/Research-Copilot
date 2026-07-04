@@ -27,16 +27,12 @@ class Brief(BaseModel):
     website: str
     objective: str
     status: BriefStatus
-    # {"answered": bool, "questions": [...]} — null until the gate asks.
     clarification_question: dict | None = None
     created_at: datetime
     updated_at: datetime
 
 
 class BriefPage(BaseModel):
-    """Paginated brief list. `total` is the unfiltered count so the frontend
-    can render a page count without a second round-trip."""
-
     items: list[Brief]
     total: int
     limit: int

@@ -1,5 +1,3 @@
-"""Email + password auth. Mints our own JWT on success."""
-
 from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,9 +26,7 @@ class AuthService:
     async def sign_up(self, payload: Credentials) -> AuthResponse:
         existing = await self._users.get_by_email(payload.email)
         if existing is not None:
-            raise EmailAlreadyRegisteredError(
-                f"An account with {payload.email} already exists"
-            )
+            raise EmailAlreadyRegisteredError(f"An account with {payload.email} already exists")
         row = await self._users.create(
             email=payload.email,
             password_hash=hash_password(payload.password),
@@ -41,9 +37,6 @@ class AuthService:
 
     async def sign_in(self, payload: Credentials) -> AuthResponse:
         row = await self._users.get_by_email(payload.email)
-        # Always run the verifier so timing doesn't leak which email exists.
-        # bcrypt.checkpw on a junk hash takes the same ballpark time as on a
-        # real one because it has to derive a key either way.
         valid_hash = (
             row.password_hash
             if row

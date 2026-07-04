@@ -1,13 +1,3 @@
-"""Prompts for the company-focused deep-research workflow (Graph 1).
-
-Anchored to a target company (name + website). Graph 1 covers clarify →
-brief → plan. The supervisor / researcher / report prompts moved to the
-TypeScript worker.
-"""
-
-
-# ----- Clarification ------------------------------------------------------
-
 clarify_with_user_instructions = """You are the intake gate for a company-research assistant. The user has already provided:
 - A target company (name + website)
 - An objective (what they want from this research)
@@ -57,8 +47,6 @@ Objective: "Draft cold-outreach angles for Stripe's payments product targeting t
 """
 
 
-# ----- Research brief -----------------------------------------------------
-
 research_brief_prompt = """You are a research strategist preparing a brief for a company-research workflow.
 
 ## Inputs
@@ -81,8 +69,6 @@ Produce a structured brief:
 **constraints**: Only list boundaries the user explicitly stated (geography, time period, segment, etc.). If they didn't constrain it, leave it out.
 """
 
-
-# ----- Research plan ------------------------------------------------------
 
 research_plan_prompt = """You are a research strategist. Given the brief below, produce a research mandate for a research supervisor. You do NOT decompose the work into a rigid task list — the supervisor decomposes dynamically as findings emerge. Your job is to set the goal, the guidance, and the angles worth covering.
 

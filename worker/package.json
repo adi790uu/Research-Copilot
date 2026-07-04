@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
+    "test": "node --test test/*.test.ts",
     "trigger:dev": "NODE_OPTIONS=--no-deprecation trigger dev --env-file .env",
     "trigger:deploy": "trigger deploy"
   },

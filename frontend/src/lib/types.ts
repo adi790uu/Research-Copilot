@@ -135,9 +135,15 @@ export type WorkflowEvent =
   | PlanReadyEvent
   | RunFailedEvent;
 
-/** Which Tavily-backed tool produced this source. `null` for legacy rows
- * where the type wasn't recorded. */
-export type SourceType = "company_site" | "web";
+/** Which tool/channel produced this source (kept in sync with the worker's
+ * SourceType). `null` for legacy rows where the type wasn't recorded. */
+export type SourceType =
+  | "company_site"
+  | "web"
+  | "linkedin"
+  | "twitter"
+  | "reddit"
+  | "social";
 
 export interface Source {
   id: string;

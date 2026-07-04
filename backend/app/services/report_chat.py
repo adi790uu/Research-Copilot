@@ -1,16 +1,3 @@
-"""Follow-up chat over a completed research brief.
-
-Once a session's research_job hits `completed`, the user can ask
-follow-up questions and the assistant answers grounded in:
-  - the ReportContent (summary + dynamic sections with per-section source_ids)
-  - the flat sources list (id + title + url + snippet)
-
-No new research is dispatched. This is straightforward RAG over what the
-session already produced — the report IS the corpus.
-
-Token-streamed back as SSE so the UI can render incrementally.
-"""
-
 from __future__ import annotations
 
 import json
@@ -32,7 +19,6 @@ from app.workflow.helpers import _create_model, _get_today_str
 logger = logging.getLogger(__name__)
 
 
-# Hard caps to keep the system prompt sane regardless of report length.
 _MAX_SECTION_CHARS = 3000
 _MAX_SOURCES_IN_PROMPT = 80
 _HISTORY_TURN_CAP = 12
@@ -58,11 +44,10 @@ def _format_sources(sources: list[dict]) -> str:
 
 
 def _format_report(report_json: str) -> str:
-    """Stringify the ReportContent JSON for the system prompt."""
     try:
         data = json.loads(report_json)
     except (ValueError, TypeError):
-        return report_json[:_MAX_SECTION_CHARS * 8]  # fallback raw
+        return report_json[: _MAX_SECTION_CHARS * 8]
 
     parts: list[str] = []
     summary = (data.get("summary") or "").strip()
@@ -108,7 +93,6 @@ Today's date: {_get_today_str()}.
 
 
 def _to_history_messages(rows: list[dict]) -> list[Any]:
-    """Convert the last N persisted turns into LangChain messages."""
     trimmed = rows[-_HISTORY_TURN_CAP:]
     msgs: list[Any] = []
     for row in trimmed:
@@ -124,8 +108,6 @@ def _to_history_messages(rows: list[dict]) -> list[Any]:
 async def list_messages(
     db: AsyncSession, *, brief_id: str, user_id: str, kind: str | None = None
 ) -> list[dict]:
-    """Return the persisted history for a brief, optionally scoped to one chat
-    surface (`workflow` or `followup`). 404s if the user doesn't own the brief."""
     brief = await BriefRepository(db, user_id).get(brief_id)
     if brief is None:
         raise NotFoundError(f"Brief {brief_id} not found")
@@ -148,19 +130,13 @@ async def stream_followup(
     user_id: str,
     question: str,
 ) -> AsyncIterator[str]:
-    """Persist the user turn, stream the assistant reply token-by-token,
-    then persist the assistant turn. Yields raw text chunks; the route
-    wraps each in an SSE frame.
-    """
     brief = await BriefRepository(db, user_id).get(brief_id)
     if brief is None:
         raise NotFoundError(f"Brief {brief_id} not found")
 
     job = await job_store.get_job_by_brief(brief_id)
     if not job or not job.get("final_report"):
-        raise ReportNotReadyError(
-            "Follow-up chat is only available after research completes."
-        )
+        raise ReportNotReadyError("Follow-up chat is only available after research completes.")
 
     msg_repo = MessageRepository(db, brief_id)
     history_rows = await msg_repo.list(kind="followup")
@@ -172,8 +148,6 @@ async def stream_followup(
         for r in history_rows
     ]
 
-    # Persist the user turn before we hit the LLM so we don't lose it if
-    # the stream breaks midway.
     await msg_repo.add(role="user", content=question.strip(), kind="followup")
     await db.commit()
 
@@ -199,8 +173,6 @@ async def stream_followup(
             yield piece
     except Exception as exc:  # noqa: BLE001
         logger.exception("followup stream failed for brief %s", brief_id)
-        # Persist whatever we got + an error tail so the conversation
-        # stays in a consistent state.
         assistant_buffer.append(f"\n\n[stream failed: {exc}]")
         yield f"\n\n[stream failed: {exc}]"
 
@@ -211,8 +183,6 @@ async def stream_followup(
 
 
 def _extract_text(chunk: Any) -> str:
-    """Pull the text out of a LangChain message-chunk. Handles both string
-    and list-of-content-blocks (vision-style) payloads."""
     content = getattr(chunk, "content", "")
     if isinstance(content, str):
         return content

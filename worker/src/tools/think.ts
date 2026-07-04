@@ -1,7 +1,6 @@
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 
-/** Strategic reflection tool — pure, no I/O. Used in the ReAct loops. */
 export const thinkTool = tool(
   async ({ reflection }) => `Reflection recorded: ${reflection}`,
   {

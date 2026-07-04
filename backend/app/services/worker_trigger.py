@@ -15,20 +15,12 @@ async def trigger_research_worker(
     user_id: str,
     research_plan: str,
 ) -> None:
-    """Trigger the worker for `job_id`. Idempotent on `job_id`.
-
-    No-ops (with a warning) when `trigger_secret_key` is unset so local
-    dev / pre-deploy still creates the job row without a live worker.
-    """
     settings = get_settings()
     if not settings.trigger_secret_key:
         log.warning("trigger_worker_skipped_no_secret", job_id=job_id)
         return
 
-    url = (
-        f"{settings.trigger_api_url.rstrip('/')}"
-        f"/api/v1/tasks/{settings.trigger_task_id}/trigger"
-    )
+    url = f"{settings.trigger_api_url.rstrip('/')}/api/v1/tasks/{settings.trigger_task_id}/trigger"
     body = {
         "payload": {
             "jobId": job_id,
