@@ -25,6 +25,7 @@ import {
   todayStr,
 } from "@/prompts";
 import { companySiteSearch, socialSearch, webCompanySearch } from "@/tools/company-search";
+import { personSearch } from "@/tools/person-search";
 import { thinkTool } from "@/tools/think";
 
 function extractSources(messages: BaseMessage[]): Source[] {
@@ -39,6 +40,7 @@ function selectTools(toolsToUse: string): StructuredToolInterface[] {
   if (toolsToUse === "company_site") return [companySiteSearch, thinkTool];
   if (toolsToUse === "web") return [webCompanySearch, thinkTool];
   if (toolsToUse === "social") return [socialSearch, thinkTool];
+  if (toolsToUse === "person") return [personSearch, thinkTool];
   return [companySiteSearch, webCompanySearch, socialSearch, thinkTool];
 }
 
@@ -52,6 +54,8 @@ function renderToolsSection(tools: StructuredToolInterface[]): { section: string
       return `${n}. web_company_search: external sources (news, funding, reviews). Company name is prepended automatically.`;
     if (t.name === "social_search")
       return `${n}. social_search: the company's verified LinkedIn and X (Twitter) profiles plus Reddit and other public discussion (sentiment, reviews, employee experience). Company name is prepended automatically.`;
+    if (t.name === "person_search")
+      return `${n}. person_search: research the specific named meeting contact — their role, background, and public activity. Every candidate is checked against the target company before being reported; an unrelated namesake is never surfaced as a match.`;
     return `${n}. think_tool: short reflection on findings or next steps. Do not call in parallel with other tools.`;
   });
   const search = names.filter((n) => n !== "think_tool");
@@ -62,6 +66,9 @@ function renderToolsSection(tools: StructuredToolInterface[]): { section: string
     routing = "Use company_site_search for every query. Stay on the company's own pages.";
   else if (search[0] === "social_search")
     routing = "Use social_search for every query. It covers the company's social profiles and public discussion; the company name is anchored automatically.";
+  else if (search[0] === "person_search")
+    routing =
+      "Use person_search for every query. If it reports the person could not be verified, do not guess — carry that gap into your findings explicitly.";
   else routing = "Use web_company_search for every query. The company name is anchored automatically.";
   return { section: lines.join("\n"), routing };
 }

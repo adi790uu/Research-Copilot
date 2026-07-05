@@ -44,12 +44,20 @@ export const deepResearch = schemaTask({
       if (!brief) throw new Error(`Brief ${briefId} not found`);
 
       const researchBrief = renderBrief(researchPlan, brief.objective);
+      const resolution = brief.contactResolution;
+      const personName = resolution?.status === "resolved" ? resolution.name ?? brief.contactName ?? "" : brief.contactName ?? "";
+      const personLinkedinUrl = resolution?.status === "resolved" ? resolution.linkedin_url ?? "" : "";
+      const personTitle = resolution?.status === "resolved" ? resolution.title ?? "" : "";
+
       const result = await graph2.invoke(
         {
           companyName: brief.companyName,
           website: brief.website,
           objective: brief.objective,
           researchBrief,
+          personName,
+          personLinkedinUrl,
+          personTitle,
         },
         {
           configurable: {
@@ -58,6 +66,8 @@ export const deepResearch = schemaTask({
             userId,
             companyName: brief.companyName,
             website: brief.website,
+            personName,
+            personLinkedinUrl,
           },
         },
       );

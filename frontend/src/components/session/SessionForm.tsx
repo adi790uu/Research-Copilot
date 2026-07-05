@@ -14,9 +14,17 @@ interface FormState {
   company_name: string;
   website: string;
   objective: string;
+  contact_name: string;
+  contact_email: string;
 }
 
-const EMPTY: FormState = { company_name: "", website: "", objective: "" };
+const EMPTY: FormState = {
+  company_name: "",
+  website: "",
+  objective: "",
+  contact_name: "",
+  contact_email: "",
+};
 
 /**
  * The brief composer reads as a single typeset sentence with inline
@@ -30,7 +38,14 @@ export function SessionForm() {
   const [form, setForm] = useState<FormState>(EMPTY);
 
   const create = useMutation({
-    mutationFn: () => api.briefs.create(form),
+    mutationFn: () =>
+      api.briefs.create({
+        company_name: form.company_name,
+        website: form.website,
+        objective: form.objective,
+        ...(form.contact_name.trim() ? { contact_name: form.contact_name.trim() } : {}),
+        ...(form.contact_email.trim() ? { contact_email: form.contact_email.trim() } : {}),
+      }),
     onSuccess: (brief) => {
       // Push the new brief straight into the cached brief lists so the
       // sidebar updates instantly — no refetch, no flicker. We only prepend
@@ -122,7 +137,30 @@ export function SessionForm() {
             minWidth={10}
             mono
           />
-          <span>, so we can</span>
+          <span>, ahead of a meeting with </span>
+          <InlineField
+            id="contact_name"
+            label="Meeting contact (optional)"
+            value={form.contact_name}
+            onChange={(v) => set("contact_name", v)}
+            placeholder="their name"
+            maxLength={200}
+            minWidth={9}
+            required={false}
+          />
+          <span> (</span>
+          <InlineField
+            id="contact_email"
+            label="Meeting contact email (optional)"
+            type="email"
+            value={form.contact_email}
+            onChange={(v) => set("contact_email", v)}
+            placeholder="email — optional"
+            minWidth={11}
+            mono
+            required={false}
+          />
+          <span>), so we can</span>
         </p>
 
         <ObjectiveField
@@ -189,6 +227,7 @@ function InlineField({
   maxLength,
   minWidth = 8,
   mono = false,
+  required = true,
 }: {
   id: string;
   label: string;
@@ -199,6 +238,7 @@ function InlineField({
   maxLength?: number;
   minWidth?: number;
   mono?: boolean;
+  required?: boolean;
 }) {
   const ref = useRef<HTMLInputElement | null>(null);
 
@@ -240,7 +280,7 @@ function InlineField({
         placeholder={placeholder}
         maxLength={maxLength}
         autoComplete="off"
-        required
+        required={required}
         className={`peer relative inline-block min-w-0 border-b border-rule/25 bg-transparent pb-0.5 text-ink transition-colors placeholder:text-ink-faint/60 focus:border-accent ${
           mono
             ? "font-mono text-[0.95em] tracking-tight"

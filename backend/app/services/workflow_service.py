@@ -42,15 +42,21 @@ class WorkflowService:
     def __init__(self, *, checkpointer: BaseCheckpointSaver) -> None:
         self._checkpointer = checkpointer
 
-    def _build(self, *, brief_id: str) -> tuple[Any, RunnableConfig]:
+    def _build(
+        self, *, brief_id: str, allow_clarification: bool | None = None
+    ) -> tuple[Any, RunnableConfig]:
         settings = get_settings()
-        graph = build_graph(checkpointer=self._checkpointer)
         config: RunnableConfig = {
             "configurable": {
                 "thread_id": brief_id,
-                "allow_clarification": settings.workflow_allow_clarification,
+                "allow_clarification": (
+                    settings.workflow_allow_clarification
+                    if allow_clarification is None
+                    else allow_clarification
+                ),
             }
         }
+        graph = build_graph(checkpointer=self._checkpointer)
         return graph, config
 
     async def _set_status(self, *, brief_id: str, user_id: str, status: str) -> None:
@@ -93,13 +99,26 @@ class WorkflowService:
         message: str | None = None,
         clarification_answered: bool = False,
         clarification_answers: list[dict] | None = None,
+        is_start: bool = False,
+        contact_name: str | None = None,
+        contact_email: str | None = None,
+        contact_resolution: dict | None = None,
+        allow_clarification: bool | None = None,
     ) -> AsyncIterator[WorkflowEvent]:
-        graph, config = self._build(brief_id=brief_id)
+        graph, config = self._build(brief_id=brief_id, allow_clarification=allow_clarification)
         await self._set_status(brief_id=brief_id, user_id=user_id, status="running")
 
         input_state: dict[str, Any] | None = None
         if message and message.strip():
             text = message.strip()
+            if is_start:
+                contact_line = _contact_context_line(
+                    contact_name=contact_name,
+                    contact_email=contact_email,
+                    contact_resolution=contact_resolution,
+                )
+                if contact_line:
+                    text = f"{text}\n\n{contact_line}"
             await self._record_user_turn(
                 brief_id=brief_id,
                 user_id=user_id,
@@ -225,6 +244,38 @@ async def _phase1_event_iter(
 
     await set_status(brief_id=brief_id, user_id=user_id, status="failed")
     yield RunFailed(brief_id=brief_id, message="Phase 1 ended in an unexpected state")
+
+
+def _contact_context_line(
+    *,
+    contact_name: str | None,
+    contact_email: str | None,
+    contact_resolution: dict | None,
+) -> str | None:
+    if not contact_name:
+        return None
+    res = contact_resolution or {}
+    if res.get("status") == "resolved":
+        role = (
+            f"{res['title']} at {res['company']}"
+            if res.get("title") and res.get("company")
+            else res.get("company") or res.get("title") or "an unspecified role"
+        )
+        linkedin = f" LinkedIn: {res['linkedin_url']}." if res.get("linkedin_url") else ""
+        return (
+            f"Meeting contact: {contact_name}, resolved as {role} "
+            f"(match confidence {res.get('likelihood', '?')}/10).{linkedin} Treat this identity as "
+            "verified — the plan must include a dedicated coverage angle researching this person's "
+            "background, role, and likely priorities for this meeting."
+        )
+    email_part = f" ({contact_email})" if contact_email else ""
+    return (
+        f"Meeting contact: {contact_name}{email_part} — could not be confidently verified against "
+        "public data. The plan should include a coverage angle that attempts identification via "
+        "the target company's own team/about page or public web presence, anchored strictly to "
+        "the company; the final report must state explicitly if the person cannot be confirmed "
+        "rather than guessing or attributing facts about a differently-named individual."
+    )
 
 
 def _extract_clarify_marker(messages: list) -> dict[str, Any] | None:

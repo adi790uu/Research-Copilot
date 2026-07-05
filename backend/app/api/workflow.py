@@ -82,6 +82,10 @@ async def chat(
         message=message,
         clarification_answered=payload.clarification_question_answered,
         clarification_answers=answers,
+        is_start=payload.kind == "start",
+        contact_name=owned.contact_name,
+        contact_email=owned.contact_email,
+        contact_resolution=owned.contact_resolution,
     )
 
     async def generator() -> AsyncIterator[bytes]:

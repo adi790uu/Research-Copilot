@@ -9,11 +9,16 @@ export const todayStr = (): string =>
 export function leadResearcherPrompt(args: {
   companyName: string;
   website: string;
+  personName?: string;
+  personTitle?: string;
   date: string;
   maxConcurrentResearchUnits: number;
   maxResearcherIterations: number;
 }): string {
-  return `You are the supervisor of a company-research team. Your target is ${args.companyName} (${args.website}). You will receive a research mandate: a goal, guidance, and a set of coverage angles. YOU own the decomposition — turn the mandate into research tasks, dispatch researchers, evaluate results, and fill gaps until you have enough material for a strong final report.
+  const personLine = args.personName
+    ? `\n\nThis research also has a named meeting contact: ${args.personName}${args.personTitle ? ` (${args.personTitle})` : ""}. Dispatch a dedicated ConductResearch task for this person routed to \`tools_to_use: "person"\` — their role, background, and priorities are a distinct, high-signal angle, same as funding. If person_search reports it could not verify them, that gap must be carried into the final report as stated, not filled in with a guess.`
+    : "";
+  return `You are the supervisor of a company-research team. Your target is ${args.companyName} (${args.website}). You will receive a research mandate: a goal, guidance, and a set of coverage angles. YOU own the decomposition — turn the mandate into research tasks, dispatch researchers, evaluate results, and fill gaps until you have enough material for a strong final report.${personLine}
 
 Today's date is ${args.date}.
 
@@ -130,11 +135,15 @@ export function finalReportPrompt(args: {
   companyName: string;
   website: string;
   researchBrief: string;
+  personName?: string;
   findings: string;
   sourcesBlock: string;
   date: string;
 }): string {
-  return `You are writing a company-research brief on ${args.companyName} (${args.website}).
+  const personGuidance = args.personName
+    ? `\n\nThis brief also covers a named meeting contact, ${args.personName}. If <findings> contains grounded material about them, include a dedicated "Meeting contact" section (their role, background, and likely priorities, cited like everything else) and a "Suggested opening & talking points" section that synthesizes the company signal and this person's priorities into a few specific, usable opening lines and discovery questions — grounded in <findings>, not invented. If <findings> explicitly says this person could not be verified, say so plainly in the "Meeting contact" section instead of guessing, and keep the talking-points section company-only.`
+    : "";
+  return `You are writing a company-research brief on ${args.companyName} (${args.website}).${personGuidance}
 
 ## Inputs
 
@@ -172,12 +181,16 @@ Facts in <findings> are already tagged with the citation id of the source that b
 
 export function reviewReportPrompt(args: {
   companyName: string;
+  personName?: string;
   draft: string;
   findings: string;
   validSourceIds: string;
   date: string;
 }): string {
-  return `You are a senior editor producing the FINAL version of a company-research brief on ${args.companyName}.
+  const personGuidance = args.personName
+    ? ` The draft may include a "Meeting contact" section on ${args.personName} and a "Suggested opening & talking points" section — keep both, apply the same grounding bar to them, and never let the talking points assert anything about ${args.personName} that isn't in <findings>.`
+    : "";
+  return `You are a senior editor producing the FINAL version of a company-research brief on ${args.companyName}.${personGuidance}
 
 <draft_report_json>
 ${args.draft}

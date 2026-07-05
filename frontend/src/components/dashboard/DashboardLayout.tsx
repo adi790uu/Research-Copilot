@@ -1,11 +1,8 @@
-import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, NavLink, useNavigate } from "react-router-dom";
 
 import { useAuth } from "../../lib/auth";
 
-import { useApi } from "../../lib/api";
-import type { Brief } from "../../lib/types";
 import { ThemeToggle } from "../ui/ThemeToggle";
 import { Wordmark } from "../ui/Wordmark";
 
@@ -94,26 +91,13 @@ function Sidebar({ onCollapse }: { onCollapse: () => void }) {
       </div>
 
       <div className="px-3">
-        <NewBriefButton />
+        <NewResearchButton />
       </div>
 
-      <div className="px-5 mt-6 flex items-center justify-between">
-        <p className="eyebrow">Researches</p>
-        <NavLink
-          to="/app"
-          end
-          className={({ isActive }) =>
-            `font-mono text-[0.625rem] uppercase tracking-wider transition-colors
-            ${isActive ? "text-ink" : "text-ink-faint hover:text-ink"}`
-          }
-        >
-          Overview
-        </NavLink>
-      </div>
-
-      <div className="mt-2 flex-1 overflow-y-auto px-3 pb-2">
-        <ResearchList />
-      </div>
+      <nav className="mt-4 px-3 space-y-0.5">
+        <SidebarLink to="/app" end label="Copilot" />
+        <SidebarLink to="/app/researches" label="Researches" />
+      </nav>
 
       <div className="mt-auto px-5 py-4 flex items-center justify-between">
         <UserChip />
@@ -126,12 +110,12 @@ function Sidebar({ onCollapse }: { onCollapse: () => void }) {
   );
 }
 
-function NewBriefButton() {
+function NewResearchButton() {
   const navigate = useNavigate();
   return (
     <button
       type="button"
-      onClick={() => navigate("/app#new")}
+      onClick={() => navigate("/app")}
       className="group flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-ink-soft transition-colors hover:bg-ink/[0.04] hover:text-ink"
     >
       <span
@@ -152,206 +136,24 @@ function NewBriefButton() {
           <path d="M5 12h14" />
         </svg>
       </span>
-      <span className="text-sm">New brief</span>
+      <span className="text-sm">New research</span>
     </button>
   );
 }
 
-const PAGE_SIZE = 10;
-
-function ResearchList() {
-  const api = useApi();
-  const [page, setPage] = useState(0); // zero-indexed
-  const sessions = useQuery({
-    queryKey: ["briefs", { limit: PAGE_SIZE, offset: page * PAGE_SIZE }],
-    queryFn: () =>
-      api.briefs.list({ limit: PAGE_SIZE, offset: page * PAGE_SIZE }),
-    placeholderData: (prev) => prev, // smooth page transitions
-  });
-
-  if (sessions.isLoading) {
-    return (
-      <ul className="space-y-2 px-2 pt-2 animate-pulse" aria-busy>
-        {[0, 1, 2, 3].map((i) => (
-          <li key={i} className="space-y-1">
-            <div className="h-3 w-4/5 bg-ink/8 rounded-sm" />
-            <div className="h-2 w-1/2 bg-ink/5 rounded-sm" />
-          </li>
-        ))}
-      </ul>
-    );
-  }
-
-  if (sessions.error) {
-    return (
-      <p className="px-2 pt-2 font-mono text-[0.625rem] uppercase tracking-wider text-bad">
-        Archive offline
-      </p>
-    );
-  }
-
-  const items = sessions.data?.items ?? [];
-  const total = sessions.data?.total ?? 0;
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-
-  if (total === 0) {
-    return (
-      <p className="px-2 pt-2 text-xs text-ink-faint italic leading-relaxed">
-        No briefs yet. Compose your first one above.
-      </p>
-    );
-  }
-
+function SidebarLink({ to, label, end }: { to: string; label: string; end?: boolean }) {
   return (
-    <div className="flex h-full flex-col">
-      <ul className="space-y-px">
-        {items.map((s, idx) => {
-          // Global ordinal: oldest=1, most recent=total. Page is sorted
-          // desc by updated_at, so the row's display number is
-          // `total - (offset + idx)`.
-          const ordinal = total - (page * PAGE_SIZE + idx);
-          return <ResearchRow key={s.id} session={s} ordinal={ordinal} />;
-        })}
-      </ul>
-
-      {totalPages > 1 ? (
-        <Pagination
-          page={page}
-          totalPages={totalPages}
-          onPage={setPage}
-          stale={sessions.isFetching}
-        />
-      ) : null}
-    </div>
-  );
-}
-
-function Pagination({
-  page,
-  totalPages,
-  onPage,
-  stale,
-}: {
-  page: number;
-  totalPages: number;
-  onPage: (p: number) => void;
-  stale: boolean;
-}) {
-  const atFirst = page === 0;
-  const atLast = page >= totalPages - 1;
-  return (
-    <div className="mt-3 flex items-center justify-between px-2 pb-2">
-      <PaginationChevron
-        dir="prev"
-        disabled={atFirst}
-        onClick={() => onPage(Math.max(0, page - 1))}
-      />
-      <span
-        className={`font-mono text-[0.625rem] uppercase tracking-eyebrow text-ink-faint tabular-nums transition-opacity ${
-          stale ? "opacity-50" : "opacity-100"
-        }`}
-        aria-live="polite"
-      >
-        {String(page + 1).padStart(2, "0")}
-        <span className="mx-1 text-ink-faint/50">/</span>
-        {String(totalPages).padStart(2, "0")}
-      </span>
-      <PaginationChevron
-        dir="next"
-        disabled={atLast}
-        onClick={() => onPage(Math.min(totalPages - 1, page + 1))}
-      />
-    </div>
-  );
-}
-
-function PaginationChevron({
-  dir,
-  disabled,
-  onClick,
-}: {
-  dir: "prev" | "next";
-  disabled: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      aria-label={dir === "prev" ? "Previous page" : "Next page"}
-      className="grid h-6 w-6 place-items-center rounded text-ink-faint transition-colors enabled:hover:bg-ink/[0.04] enabled:hover:text-ink disabled:opacity-30"
+    <NavLink
+      to={to}
+      end={end}
+      className={({ isActive }) =>
+        `block rounded-lg px-2 py-2 text-sm transition-colors
+        ${isActive ? "bg-ink/[0.06] text-ink" : "text-ink-soft hover:bg-ink/[0.04] hover:text-ink"}`
+      }
     >
-      <svg
-        viewBox="0 0 24 24"
-        width={12}
-        height={12}
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={1.75}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        style={{ transform: dir === "next" ? "scaleX(-1)" : undefined }}
-        aria-hidden="true"
-      >
-        <path d="m15 18-6-6 6-6" />
-      </svg>
-    </button>
+      {label}
+    </NavLink>
   );
-}
-
-function ResearchRow({ session, ordinal }: { session: Brief; ordinal: number }) {
-  const dot = statusDotClass(session.status);
-  const pulsing = session.status === "running" ? "animate-pulse-dot" : "";
-
-  return (
-    <li>
-      <NavLink
-        to={`/app/sessions/${session.id}`}
-        className={({ isActive }) =>
-          `group flex items-baseline gap-2.5 px-2 py-2 rounded-sm transition-colors
-          ${isActive
-            ? "bg-bg/70 text-ink"
-            : "text-ink-soft hover:text-ink hover:bg-bg/40"}`
-        }
-      >
-        <span
-          aria-hidden
-          className={`mt-1.5 h-[5px] w-[5px] rounded-full shrink-0 ${dot} ${pulsing}`}
-        />
-        <span className="flex-1 min-w-0">
-          <span className="block text-sm truncate leading-tight">
-            {session.company_name}
-          </span>
-          <span className="block mt-0.5 font-mono text-[0.625rem] uppercase tracking-wider text-ink-faint/80 truncate">
-            №{String(ordinal).padStart(2, "0")} · {relativeShort(session.updated_at)}
-          </span>
-        </span>
-      </NavLink>
-    </li>
-  );
-}
-
-function statusDotClass(s: Brief["status"]): string {
-  switch (s) {
-    case "running":
-      return "bg-info";
-    case "completed":
-      return "bg-good";
-    case "failed":
-      return "bg-bad";
-    default:
-      return "bg-ink-faint/60";
-  }
-}
-
-function relativeShort(iso: string): string {
-  const diff = Math.max(0, Date.now() - new Date(iso).getTime()) / 1000;
-  if (diff < 60) return "now";
-  if (diff < 3600) return `${Math.floor(diff / 60)}m`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
-  if (diff < 604800) return `${Math.floor(diff / 86400)}d`;
-  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
 function MobileBar() {

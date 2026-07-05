@@ -11,6 +11,7 @@ import { type ChatTurn, type RunPhase } from "../../hooks/useWorkflowChat";
 import type { ResearchStatus } from "../../lib/runStatus";
 import type {
   ClarificationQuestion,
+  ContactResolution,
   ResearchPlan,
   WorkflowNode,
 } from "../../lib/types";
@@ -18,6 +19,11 @@ import { ClarificationCard } from "./ClarificationCard";
 
 interface Props {
   companyName: string;
+  /** Meeting-contact name given at brief creation, if any. */
+  contactName?: string | null;
+  /** PDL resolution result for the meeting contact — only "unresolved" ever
+   * surfaces anything, and only on the plan card (never a blocking gate). */
+  contactResolution?: ContactResolution | null;
   turns: ChatTurn[];
   phase: RunPhase;
   streaming: boolean;
@@ -54,6 +60,8 @@ interface Props {
 
 export function ChatPanel({
   companyName,
+  contactName = null,
+  contactResolution = null,
   turns,
   phase,
   streaming,
@@ -151,6 +159,8 @@ export function ChatPanel({
                 onApprovePlan={onApprovePlan}
                 approving={approving}
                 approveError={approveError}
+                contactName={contactName}
+                contactResolution={contactResolution}
               />
             ))}
             {showThinking ? (
@@ -336,12 +346,16 @@ function TurnView({
   onApprovePlan,
   approving,
   approveError,
+  contactName,
+  contactResolution,
 }: {
   turn: ChatTurn;
   onOpenReport: () => void;
   onApprovePlan: () => void;
   approving: boolean;
   approveError: string | null;
+  contactName: string | null;
+  contactResolution: ContactResolution | null;
 }) {
   if (turn.role === "user") {
     if (turn.kind === "answers") {
@@ -384,6 +398,8 @@ function TurnView({
           approving={approving}
           approveError={approveError}
           onApprove={onApprovePlan}
+          contactName={contactName}
+          contactResolution={contactResolution}
         />
       );
     case "report_ready":
@@ -443,14 +459,22 @@ function PlanCard({
   approving,
   approveError,
   onApprove,
+  contactName,
+  contactResolution,
 }: {
   plan: ResearchPlan;
   acted: boolean;
   approving: boolean;
   approveError: string | null;
   onApprove: () => void;
+  contactName?: string | null;
+  contactResolution?: ContactResolution | null;
 }) {
   const steps = plan.coverage_angles ?? [];
+  // Only the unresolved/no-match case ever surfaces anything here — a
+  // confident PDL match rides along silently and just shows up in the
+  // research angles and finished report.
+  const showUnresolvedContact = !!contactName && contactResolution?.status !== "resolved";
   // The plan speaks in Newsreader — a calm editorial text serif, distinct from
   // the Fraunces display + Geist sans used everywhere else.
   const planFont = '"Newsreader", Georgia, serif';
@@ -537,6 +561,24 @@ function PlanCard({
             >
               {plan.guidance}
             </p>
+          ) : null}
+
+          {/* Unresolved meeting contact — the only case that ever surfaces
+              anything here; a confident match rides along silently. */}
+          {showUnresolvedContact ? (
+            <div className="mt-6 rounded-xl bg-accent/[0.06] px-4 py-3">
+              <p className="font-mono text-[0.625rem] uppercase tracking-eyebrow text-accent">
+                Meeting contact not confirmed
+              </p>
+              <p className="mt-1.5 text-sm leading-relaxed text-ink-soft">
+                We couldn't confidently verify{" "}
+                <span className="text-ink">{contactName}</span> against public
+                data. Research will still try to identify them from the
+                company's own site and public web presence, and the report
+                will say so plainly rather than guess if it still can't be
+                confirmed.
+              </p>
+            </div>
           ) : null}
 
           {/* Commit */}

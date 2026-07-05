@@ -3,6 +3,7 @@ import { eq, sql } from "drizzle-orm";
 import { db } from "@/db/client";
 import {
   briefs,
+  type ContactResolution,
   researchJobEvents,
   researchJobResearchers,
   researchJobs,
@@ -15,6 +16,9 @@ export type BriefContext = {
   website: string;
   objective: string;
   userId: string;
+  contactName: string | null;
+  contactEmail: string | null;
+  contactResolution: ContactResolution | null;
 };
 
 export async function getBrief(briefId: string): Promise<BriefContext | null> {
@@ -24,6 +28,9 @@ export async function getBrief(briefId: string): Promise<BriefContext | null> {
       website: briefs.website,
       objective: briefs.objective,
       userId: briefs.userId,
+      contactName: briefs.contactName,
+      contactEmail: briefs.contactEmail,
+      contactResolution: briefs.contactResolution,
     })
     .from(briefs)
     .where(eq(briefs.id, briefId))

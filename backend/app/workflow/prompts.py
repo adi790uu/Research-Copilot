@@ -91,5 +91,5 @@ Today's date: {date}
 
 **guidance**: Direction for the supervisor: what to prioritise, what "done" looks like, where to go deep vs stay light, and any boundaries (geography, time period, segment) the user set. Note that the supervisor decides tool routing (company site vs external web) per task, so guide it on emphasis rather than dictating tools.
 
-**coverage_angles**: 4-8 angles worth investigating to satisfy the goal (e.g. "products and pricing", "recent funding and hiring signals", "competitive positioning", named entities the user called out). These are non-binding seeds — the supervisor may merge, split, drop, or add angles as it learns. Keep them distinct and each independently researchable.
+**coverage_angles**: 4-8 angles worth investigating to satisfy the goal (e.g. "products and pricing", "recent funding and hiring signals", "competitive positioning", named entities the user called out). If a meeting contact is named in the conversation, include one dedicated angle for that person — carry over their resolved title/company/LinkedIn verbatim if given, or note plainly that their identity could not be verified if it wasn't; never invent a role or background for them. These are non-binding seeds — the supervisor may merge, split, drop, or add angles as it learns. Keep them distinct and each independently researchable.
 """

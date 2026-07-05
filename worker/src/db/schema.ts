@@ -11,6 +11,18 @@ export type Source = {
   type?: SourceType | null;
 };
 
+export type ContactResolution = {
+  status: "resolved" | "unresolved" | "skipped";
+  source?: string | null;
+  likelihood?: number | null;
+  name?: string | null;
+  title?: string | null;
+  company?: string | null;
+  company_website?: string | null;
+  linkedin_url?: string | null;
+  location?: string | null;
+};
+
 export const briefs = pgTable("briefs", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull(),
@@ -18,6 +30,9 @@ export const briefs = pgTable("briefs", {
   website: text("website").notNull(),
   objective: text("objective").notNull(),
   status: text("status").notNull(),
+  contactName: text("contact_name"),
+  contactEmail: text("contact_email"),
+  contactResolution: json("contact_resolution").$type<ContactResolution>(),
 });
 
 export const researchJobs = pgTable("research_jobs", {

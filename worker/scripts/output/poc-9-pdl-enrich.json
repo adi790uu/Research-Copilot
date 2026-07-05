@@ -1,0 +1,329 @@
+{
+  "meta": {
+    "name": "Aditya Agarwal",
+    "email": "aditya.agarwal@stepsai.ca",
+    "domain": "stepsai.ca",
+    "companyGuess": "stepsai",
+    "generatedAt": "2026-07-05T07:45:46.539Z"
+  },
+  "sandboxAuthCheck": {
+    "status": 404,
+    "body": {
+      "status": 404,
+      "error": {
+        "type": "not_found",
+        "message": "No records were found matching your request"
+      }
+    }
+  },
+  "byEmail": {
+    "status": 404,
+    "body": {
+      "status": 404,
+      "error": {
+        "type": "not_found",
+        "message": "No records were found matching your request"
+      }
+    }
+  },
+  "byNameCompany": {
+    "status": 200,
+    "body": {
+      "status": 200,
+      "likelihood": 8,
+      "data": {
+        "id": "JrBuqEbc1-Wg4YM-FOsRCQ_0000",
+        "full_name": "aditya agarwal",
+        "first_name": "aditya",
+        "middle_initial": null,
+        "middle_name": null,
+        "last_initial": "a",
+        "last_name": "agarwal",
+        "sex": "male",
+        "birth_year": false,
+        "birth_date": false,
+        "linkedin_url": "linkedin.com/in/aditya-agarwal-1509a021b",
+        "linkedin_username": "aditya-agarwal-1509a021b",
+        "linkedin_id": "931088076",
+        "facebook_url": null,
+        "facebook_username": null,
+        "facebook_id": null,
+        "twitter_url": null,
+        "twitter_username": null,
+        "github_url": null,
+        "github_username": null,
+        "work_email": false,
+        "personal_emails": false,
+        "recommended_personal_email": false,
+        "mobile_phone": false,
+        "industry": "computer software",
+        "job_title": "software engineer",
+        "job_title_role": "engineering",
+        "job_title_sub_role": "software",
+        "job_title_class": "research_and_development",
+        "job_title_levels": [],
+        "job_company_id": "fuCVi4H3cfBDEgiS6nLV4gru7qL2",
+        "job_company_name": "steps ai",
+        "job_company_website": "stepsai.co",
+        "job_company_size": "1-10",
+        "job_company_founded": 2024,
+        "job_company_industry": "internet",
+        "job_company_industry_v2": "technology, information and internet",
+        "job_company_linkedin_url": "linkedin.com/company/stepsai-aide",
+        "job_company_linkedin_id": "100931595",
+        "job_company_facebook_url": null,
+        "job_company_twitter_url": null,
+        "job_company_location_name": "toronto, ontario, canada",
+        "job_company_location_locality": "toronto",
+        "job_company_location_metro": null,
+        "job_company_location_region": "ontario",
+        "job_company_location_geo": "43.67,-79.41",
+        "job_company_location_street_address": null,
+        "job_company_location_address_line_2": null,
+        "job_company_location_postal_code": null,
+        "job_company_location_country": "canada",
+        "job_company_location_continent": "north america",
+        "job_last_changed": "2026-02-26",
+        "job_last_verified": "2026-04-15",
+        "job_start_date": "2025-06",
+        "location_name": true,
+        "location_locality": true,
+        "location_metro": false,
+        "location_region": true,
+        "location_country": "india",
+        "location_continent": "asia",
+        "location_street_address": false,
+        "location_address_line_2": null,
+        "location_postal_code": false,
+        "location_geo": true,
+        "location_last_updated": "2026-04-20",
+        "phone_numbers": false,
+        "emails": false,
+        "interests": [],
+        "skills": [
+          "c (programming language)",
+          "c++",
+          "express.js",
+          "javascript",
+          "mongodb",
+          "node.js",
+          "prisma orm",
+          "python",
+          "react.js",
+          "rest apis",
+          "typescript"
+        ],
+        "location_names": true,
+        "regions": true,
+        "countries": [
+          "india"
+        ],
+        "street_addresses": false,
+        "experience": [
+          {
+            "company": {
+              "name": "steps ai",
+              "size": "1-10",
+              "id": "fuCVi4H3cfBDEgiS6nLV4gru7qL2",
+              "founded": 2024,
+              "industry": "internet",
+              "industry_v2": "technology, information and internet",
+              "location": {
+                "name": "toronto, ontario, canada",
+                "locality": "toronto",
+                "region": "ontario",
+                "metro": null,
+                "country": "canada",
+                "continent": "north america",
+                "street_address": null,
+                "address_line_2": null,
+                "postal_code": null,
+                "geo": "43.67,-79.41"
+              },
+              "linkedin_url": "linkedin.com/company/stepsai-aide",
+              "linkedin_id": "100931595",
+              "facebook_url": null,
+              "twitter_url": null,
+              "website": "stepsai.co"
+            },
+            "location_names": [],
+            "end_date": null,
+            "start_date": "2025-06",
+            "title": {
+              "name": "software engineer",
+              "class": "research_and_development",
+              "role": "engineering",
+              "sub_role": "software",
+              "levels": []
+            },
+            "is_primary": true
+          },
+          {
+            "company": {
+              "name": "steps ai",
+              "size": "1-10",
+              "id": "fuCVi4H3cfBDEgiS6nLV4gru7qL2",
+              "founded": 2024,
+              "industry": "internet",
+              "industry_v2": "technology, information and internet",
+              "location": {
+                "name": "toronto, ontario, canada",
+                "locality": "toronto",
+                "region": "ontario",
+                "metro": null,
+                "country": "canada",
+                "continent": "north america",
+                "street_address": null,
+                "address_line_2": null,
+                "postal_code": null,
+                "geo": "43.67,-79.41"
+              },
+              "linkedin_url": "linkedin.com/company/stepsai-aide",
+              "linkedin_id": "100931595",
+              "facebook_url": null,
+              "twitter_url": null,
+              "website": "stepsai.co"
+            },
+            "location_names": [],
+            "end_date": "2025-06",
+            "start_date": "2025-02",
+            "title": {
+              "name": "software development intern",
+              "class": "research_and_development",
+              "role": "engineering",
+              "sub_role": "software",
+              "levels": [
+                "training"
+              ]
+            },
+            "is_primary": false
+          },
+          {
+            "company": {
+              "name": "flibbr",
+              "size": "1-10",
+              "id": "az9eW8miC3UJZ9ECfrEnTQW6LvvW",
+              "founded": 2024,
+              "industry": "internet",
+              "industry_v2": "technology, information and internet",
+              "location": {
+                "name": "bangalore, karnataka, india",
+                "locality": "bangalore",
+                "region": "karnataka",
+                "metro": null,
+                "country": "india",
+                "continent": "asia",
+                "street_address": null,
+                "address_line_2": null,
+                "postal_code": null,
+                "geo": "12.97,77.59"
+              },
+              "linkedin_url": "linkedin.com/company/flibbrai",
+              "linkedin_id": "103749715",
+              "facebook_url": null,
+              "twitter_url": null,
+              "website": "flibbr.ai"
+            },
+            "location_names": [
+              "bangalore, karnataka, india"
+            ],
+            "end_date": "2024-11",
+            "start_date": "2024-08",
+            "title": {
+              "name": "software development intern",
+              "class": "research_and_development",
+              "role": "engineering",
+              "sub_role": "software",
+              "levels": [
+                "training"
+              ]
+            },
+            "is_primary": false
+          },
+          {
+            "company": {
+              "name": "datifyy",
+              "size": "1-10",
+              "id": "74n0DXedxFPJQkNYjooTqAgMmd4C",
+              "founded": 2023,
+              "industry": "internet",
+              "industry_v2": "technology, information and internet",
+              "location": {
+                "name": "bangalore, karnataka, india",
+                "locality": "bangalore",
+                "region": "karnataka",
+                "metro": null,
+                "country": "india",
+                "continent": "asia",
+                "street_address": null,
+                "address_line_2": null,
+                "postal_code": null,
+                "geo": "12.97,77.59"
+              },
+              "linkedin_url": "linkedin.com/company/datifyy",
+              "linkedin_id": "96956084",
+              "facebook_url": null,
+              "twitter_url": null,
+              "website": null
+            },
+            "location_names": [
+              "bangalore, karnataka, india"
+            ],
+            "end_date": "2024-02",
+            "start_date": "2023-12",
+            "title": {
+              "name": "software engineer",
+              "class": "research_and_development",
+              "role": "engineering",
+              "sub_role": "software",
+              "levels": []
+            },
+            "is_primary": false
+          }
+        ],
+        "education": [
+          {
+            "school": {
+              "name": "dayananda sagar college of engineering, bangalore",
+              "type": "post-secondary institution",
+              "id": "sleb20Zl8iZUnuWxxK58Zg_0",
+              "location": {
+                "name": "bangalore, karnataka, india",
+                "locality": "bangalore",
+                "region": "karnataka",
+                "country": "india",
+                "continent": "asia"
+              },
+              "linkedin_url": "linkedin.com/school/dayananda-sagar-college-of-engineering-bangalore",
+              "facebook_url": "facebook.com/dayanandasagaruniversitybangalore",
+              "twitter_url": "twitter.com/dsiorganization",
+              "linkedin_id": "15105214",
+              "website": "dsu.edu.in",
+              "domain": "dsu.edu.in"
+            },
+            "degrees": [
+              "bachelor of engineering",
+              "bachelors"
+            ],
+            "start_date": "2021-12",
+            "end_date": "2025-10",
+            "majors": [
+              "information science"
+            ],
+            "minors": [],
+            "gpa": null
+          }
+        ],
+        "profiles": [
+          {
+            "network": "linkedin",
+            "id": "931088076",
+            "url": "linkedin.com/in/aditya-agarwal-1509a021b",
+            "username": "aditya-agarwal-1509a021b"
+          }
+        ],
+        "dataset_version": "34.2"
+      }
+    }
+  }
+}

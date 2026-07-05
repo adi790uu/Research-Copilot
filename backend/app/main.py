@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -12,7 +13,19 @@ from app.core.errors import register_error_handlers
 from app.core.logging import configure_logging, get_logger
 from app.persistence.checkpointer import checkpointer_lifespan
 from app.persistence.db import dispose_db, init_db
+from app.services import hubspot_sync
 from app.services.workflow_service import WorkflowService
+
+
+async def _hubspot_poll_loop(workflow_service: WorkflowService) -> None:
+    settings = get_settings()
+    log = get_logger(__name__)
+    while True:
+        try:
+            await hubspot_sync.run_sync_cycle(workflow_service)
+        except Exception:  # noqa: BLE001
+            log.exception("hubspot_sync_cycle_failed")
+        await asyncio.sleep(settings.hubspot_poll_interval_seconds)
 
 
 @asynccontextmanager
@@ -27,9 +40,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.checkpointer = saver
         app.state.workflow_service = WorkflowService(checkpointer=saver)
         log.info("checkpointer_ready")
+
+        poll_task: asyncio.Task | None = None
+        if settings.hubspot_access_token and settings.hubspot_deal_stage_id:
+            poll_task = asyncio.create_task(_hubspot_poll_loop(app.state.workflow_service))
+            log.info("hubspot_sync_started", interval_s=settings.hubspot_poll_interval_seconds)
+
         try:
             yield
         finally:
+            if poll_task is not None:
+                poll_task.cancel()
             await dispose_db()
             log.info("shutdown")
 

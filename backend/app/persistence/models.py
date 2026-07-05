@@ -56,6 +56,9 @@ class BriefORM(Base):
     title: Mapped[str] = mapped_column(String(200), nullable=False, default="New research")
     status: Mapped[str] = mapped_column(String(40), nullable=False, default="pending")
     clarification_question: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    contact_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    contact_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    contact_resolution: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow
     )
@@ -183,6 +186,29 @@ class ResearchJobResearcherORM(Base):
     )
 
     job: Mapped[ResearchJobORM] = relationship(back_populates="researchers")
+
+
+class HubspotDealSyncORM(Base):
+    """One row per HubSpot deal we've picked up for automatic research.
+    `deal_id` is unique so a poll cycle never re-processes the same deal.
+    `status` walks pending -> researching -> completed | failed; write-back
+    (the Note with the dashboard link) happens on the researching -> completed
+    transition."""
+
+    __tablename__ = "hubspot_deal_syncs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    deal_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    brief_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    job_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow, onupdate=_utcnow
+    )
 
 
 class ResearchTaskORM(Base):

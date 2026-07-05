@@ -26,6 +26,8 @@ async function researchSupervisorNode(
       leadResearcherPrompt({
         companyName: state.companyName,
         website: state.website,
+        personName: state.personName,
+        personTitle: state.personTitle,
         date: todayStr(),
         maxConcurrentResearchUnits: LIMITS.MAX_CONCURRENT_RESEARCH_UNITS,
         maxResearcherIterations: LIMITS.MAX_RESEARCHER_ITERATIONS,

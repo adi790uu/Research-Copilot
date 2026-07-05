@@ -3,8 +3,9 @@ import { Route, Routes } from "react-router-dom";
 import { DashboardLayout } from "./components/dashboard/DashboardLayout";
 import { SystemHealthGate } from "./components/SystemHealthGate";
 import { RequireAuth } from "./lib/auth";
-import Dashboard from "./routes/Dashboard";
+import Copilot from "./routes/Copilot";
 import Landing from "./routes/Landing";
+import Researches from "./routes/Researches";
 import SessionDetail from "./routes/SessionDetail";
 import SignInPage from "./routes/SignInPage";
 import SignUpPage from "./routes/SignUpPage";
@@ -24,7 +25,8 @@ export default function App() {
             <RequireAuth>
               <DashboardLayout>
                 <Routes>
-                  <Route index element={<Dashboard />} />
+                  <Route index element={<Copilot />} />
+                  <Route path="researches" element={<Researches />} />
                   <Route path="sessions/:id" element={<SessionDetail />} />
                 </Routes>
               </DashboardLayout>

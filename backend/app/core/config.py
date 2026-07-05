@@ -33,6 +33,17 @@ class Settings(BaseSettings):
     trigger_secret_key: str = Field(default="")
     trigger_task_id: str = Field(default="deep-research")
 
+    pdl_api_key: str = Field(default="")
+    pdl_min_likelihood: int = Field(default=6)
+
+    frontend_base_url: str = Field(default="http://localhost:5173")
+
+    hubspot_access_token: str = Field(default="")
+    hubspot_pipeline_id: str = Field(default="")
+    hubspot_deal_stage_id: str = Field(default="")
+    hubspot_poll_interval_seconds: int = Field(default=300)
+    hubspot_owner_email: str = Field(default="")
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

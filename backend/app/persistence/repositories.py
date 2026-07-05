@@ -9,6 +9,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.persistence.models import (
     BriefORM,
+    HubspotDealSyncORM,
     MessageORM,
     ResearchJobORM,
     UserORM,
@@ -75,6 +76,8 @@ class BriefRepository:
         objective: str,
         brief_id: str | None = None,
         title: str | None = None,
+        contact_name: str | None = None,
+        contact_email: str | None = None,
     ) -> BriefORM:
         row = BriefORM(
             user_id=self._user_id,
@@ -82,12 +85,23 @@ class BriefRepository:
             website=website,
             objective=objective,
             title=title or f"{company_name} research",
+            contact_name=contact_name,
+            contact_email=contact_email,
         )
         if brief_id:
             row.id = brief_id
         self._db.add(row)
         await self._db.flush()
         await self._db.refresh(row)
+        return row
+
+    async def set_contact_resolution(self, brief_id: str, resolution: dict) -> BriefORM | None:
+        row = await self.get(brief_id)
+        if row is None:
+            return None
+        row.contact_resolution = resolution
+        flag_modified(row, "contact_resolution")
+        await self._db.flush()
         return row
 
     async def get(self, brief_id: str) -> BriefORM | None:
@@ -149,6 +163,57 @@ class BriefRepository:
         flag_modified(row, "clarification_question")
         await self._db.flush()
         return row
+
+
+class HubspotDealSyncRepository:
+    """No user scoping — this is a service-level table the CRM sync loop owns,
+    not a per-user resource reached through the API."""
+
+    def __init__(self, db: AsyncSession) -> None:
+        self._db = db
+
+    async def get_by_deal(self, deal_id: str) -> HubspotDealSyncORM | None:
+        result = await self._db.execute(
+            select(HubspotDealSyncORM).where(HubspotDealSyncORM.deal_id == deal_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def create(self, *, deal_id: str) -> HubspotDealSyncORM:
+        row = HubspotDealSyncORM(deal_id=deal_id, status="pending")
+        self._db.add(row)
+        await self._db.flush()
+        await self._db.refresh(row)
+        return row
+
+    async def mark_researching(self, sync_id: str, *, brief_id: str, job_id: str) -> None:
+        row = await self._db.get(HubspotDealSyncORM, sync_id)
+        if row is None:
+            return
+        row.brief_id = brief_id
+        row.job_id = job_id
+        row.status = "researching"
+        await self._db.flush()
+
+    async def mark_failed(self, sync_id: str, *, error: str) -> None:
+        row = await self._db.get(HubspotDealSyncORM, sync_id)
+        if row is None:
+            return
+        row.status = "failed"
+        row.error = error[:2000]
+        await self._db.flush()
+
+    async def mark_completed(self, sync_id: str) -> None:
+        row = await self._db.get(HubspotDealSyncORM, sync_id)
+        if row is None:
+            return
+        row.status = "completed"
+        await self._db.flush()
+
+    async def list_researching(self) -> Sequence[HubspotDealSyncORM]:
+        result = await self._db.execute(
+            select(HubspotDealSyncORM).where(HubspotDealSyncORM.status == "researching")
+        )
+        return result.scalars().all()
 
 
 class MessageRepository:

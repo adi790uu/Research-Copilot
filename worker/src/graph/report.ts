@@ -68,6 +68,7 @@ async function draftReport(
       companyName: state.companyName,
       website: state.website,
       researchBrief: state.researchBrief,
+      personName: state.personName,
       findings: findingsText,
       sourcesBlock: sourcesBlock(sources),
       date,
@@ -100,6 +101,7 @@ async function reviewReport(
   try {
     const prompt = reviewReportPrompt({
       companyName: state.companyName,
+      personName: state.personName,
       draft: JSON.stringify(draft),
       findings: findingsText.slice(0, REVIEW_FINDINGS_CHARS),
       validSourceIds: [...validIds].sort().join(", ") || "(none)",

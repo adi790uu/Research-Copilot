@@ -13,6 +13,22 @@ export interface ClarificationState {
   questions: ClarificationQuestion[];
 }
 
+/** Result of the People Data Labs lookup for a brief's meeting contact.
+ * `status: "resolved"` is a confident match; "unresolved" means no candidate
+ * cleared the confidence threshold (never shown as if it were a match);
+ * "skipped" means no contact was given, or resolution isn't configured. */
+export interface ContactResolution {
+  status: "resolved" | "unresolved" | "skipped";
+  source?: string | null;
+  likelihood?: number | null;
+  name?: string | null;
+  title?: string | null;
+  company?: string | null;
+  company_website?: string | null;
+  linkedin_url?: string | null;
+  location?: string | null;
+}
+
 export interface Brief {
   id: string;
   company_name: string;
@@ -20,6 +36,9 @@ export interface Brief {
   objective: string;
   status: BriefStatus;
   clarification_question?: ClarificationState | null;
+  contact_name?: string | null;
+  contact_email?: string | null;
+  contact_resolution?: ContactResolution | null;
   created_at: string;
   updated_at: string;
 }
@@ -28,6 +47,8 @@ export interface BriefCreate {
   company_name: string;
   website: string;
   objective: string;
+  contact_name?: string;
+  contact_email?: string;
 }
 
 export interface BriefPage {

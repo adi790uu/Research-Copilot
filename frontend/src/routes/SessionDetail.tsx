@@ -384,6 +384,8 @@ export default function SessionDetail() {
     >
       <ChatPanel
         companyName={session.data?.company_name ?? "Session"}
+        contactName={session.data?.contact_name ?? null}
+        contactResolution={session.data?.contact_resolution ?? null}
         turns={turns}
         phase={phase}
         streaming={chat.streaming}

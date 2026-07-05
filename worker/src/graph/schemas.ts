@@ -10,9 +10,9 @@ export const conductResearch = tool(async () => "", {
       .string()
       .describe("Detailed, standalone research instructions. Name the company and what good output looks like."),
     tools_to_use: z
-      .enum(["company_site", "web", "social", "both"])
+      .enum(["company_site", "web", "social", "person", "both"])
       .describe(
-        "company_site (the company's own site) | web (external news/funding/reviews) | social (LinkedIn/X profiles + Reddit discussion & sentiment) | both (company_site + web + social).",
+        "company_site (the company's own site) | web (external news/funding/reviews) | social (LinkedIn/X profiles + Reddit discussion & sentiment) | person (the named meeting contact specifically — only when one is named in the mandate) | both (company_site + web + social).",
       ),
   }),
 });
