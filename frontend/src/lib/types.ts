@@ -266,3 +266,43 @@ export interface FollowupMessage {
   content: string;
   created_at: string;
 }
+
+// ---------------------------------------------------------------------------
+// Copilot: persistent chat threads that operate over one or more researches.
+// ---------------------------------------------------------------------------
+
+export type CopilotRole = "user" | "assistant";
+
+/** A proposed edit to a research report, awaiting the user's confirmation. */
+export interface EditProposal {
+  id: string;
+  brief_id: string;
+  /** Research this edit targets, for display. */
+  research_title: string;
+  /** "replace" an existing section, or "add" a new one. */
+  kind: "replace" | "add";
+  heading: string;
+  /** Current section text (empty for an "add"). */
+  before: string;
+  /** Proposed section text. */
+  after: string;
+  status: "pending" | "applied" | "discarded";
+}
+
+export interface CopilotMessage {
+  id: string;
+  role: CopilotRole;
+  content: string;
+  proposals?: EditProposal[];
+  created_at: string;
+}
+
+/** A saved chat thread. `selected_brief_ids` scopes which researches the
+ * assistant grounds on and may edit. */
+export interface CopilotConversation {
+  id: string;
+  title: string;
+  selected_brief_ids: string[];
+  created_at: string;
+  updated_at: string;
+}
