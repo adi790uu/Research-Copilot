@@ -178,7 +178,7 @@ function EmptyState({
         <p className="mt-4 text-sm text-ink-faint leading-relaxed">
           {selectedCount > 0
             ? `Ask across your ${selectedCount} selected ${selectedCount === 1 ? "research" : "researches"}, or ask to update one.`
-            : "Pick one or more researches on the left, then ask a question or request an update."}
+            : "Pick one or more researches below, then ask a question or request an update."}
         </p>
       </div>
     </div>

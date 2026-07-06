@@ -2,7 +2,6 @@ import { useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { ConversationList } from "../components/copilot/ConversationList";
-import { ResearchPicker } from "../components/copilot/ResearchPicker";
 import { ChatThread } from "../components/copilot/ChatThread";
 import { Composer } from "../components/copilot/Composer";
 import { useCopilotChat } from "../hooks/useCopilotChat";
@@ -42,13 +41,6 @@ export default function Copilot() {
           onNew={chat.newConversation}
           onDelete={chat.deleteConversation}
         />
-        <div className="divider-x mx-4" />
-        <ResearchPicker
-          researches={researches}
-          loading={researchQuery.isLoading}
-          selectedIds={chat.selectedBriefIds}
-          onToggle={chat.toggleResearch}
-        />
       </aside>
 
       <section className="flex flex-1 flex-col min-w-0 min-h-0">
@@ -60,7 +52,10 @@ export default function Copilot() {
         />
         <Composer
           disabled={chat.sending}
-          selectedCount={chat.selectedBriefIds.length}
+          researches={researches}
+          researchesLoading={researchQuery.isLoading}
+          selectedIds={chat.selectedBriefIds}
+          onToggleResearch={chat.toggleResearch}
           onSend={chat.send}
         />
       </section>

@@ -1,12 +1,21 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 
+import type { Brief } from "../../lib/types";
+import { ResearchDropdown } from "./ResearchDropdown";
+
 export function Composer({
   disabled,
-  selectedCount,
+  researches,
+  researchesLoading,
+  selectedIds,
+  onToggleResearch,
   onSend,
 }: {
   disabled: boolean;
-  selectedCount: number;
+  researches: Brief[];
+  researchesLoading: boolean;
+  selectedIds: string[];
+  onToggleResearch: (id: string) => void;
   onSend: (text: string) => void;
 }) {
   const [text, setText] = useState("");
@@ -41,6 +50,14 @@ export function Composer({
         onSubmit={submit}
         className="mx-auto max-w-2xl rounded-2xl border border-rule/12 bg-bg-elev/70 px-3 py-2 transition-colors focus-within:border-accent/50"
       >
+        <div className="flex items-center gap-2 pb-1.5">
+          <ResearchDropdown
+            researches={researches}
+            loading={researchesLoading}
+            selectedIds={selectedIds}
+            onToggle={onToggleResearch}
+          />
+        </div>
         <div className="flex items-end gap-2">
           <textarea
             ref={ref}
@@ -62,10 +79,7 @@ export function Composer({
         </div>
       </form>
       <p className="mx-auto mt-2 max-w-2xl px-2 font-mono text-[0.5625rem] uppercase tracking-eyebrow text-ink-faint/70">
-        {selectedCount > 0
-          ? `${selectedCount} ${selectedCount === 1 ? "research" : "researches"} in context`
-          : "No research selected"}
-        <span className="text-ink-faint/50"> · Enter to send, Shift + Enter for a new line</span>
+        <span className="text-ink-faint/50">Enter to send, Shift + Enter for a new line</span>
       </p>
     </div>
   );
