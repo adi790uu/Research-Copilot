@@ -48,7 +48,7 @@ export function Composer({
     <div className="shrink-0 px-6 pb-6 pt-2">
       <form
         onSubmit={submit}
-        className="mx-auto max-w-2xl rounded-2xl border border-rule/12 bg-bg-elev/70 px-3 py-2 transition-colors focus-within:border-accent/50"
+        className="mx-auto max-w-2xl rounded-2xl bg-bg-elev/70 px-3 py-2 transition-shadow focus-within:ring-1 focus-within:ring-accent/40"
       >
         <div className="flex items-center gap-2 pb-1.5">
           <ResearchDropdown

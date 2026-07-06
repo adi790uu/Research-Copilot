@@ -5,6 +5,7 @@ import { useAuth } from "../../lib/auth";
 
 import { ThemeToggle } from "../ui/ThemeToggle";
 import { Wordmark } from "../ui/Wordmark";
+import { NewResearchModal } from "./NewResearchModal";
 
 const STORAGE_KEY = "rc:sidebar-collapsed";
 
@@ -15,10 +16,13 @@ function readCollapsed(): boolean {
 
 export function DashboardLayout({ children }: { children: ReactNode }) {
   const [collapsed, setCollapsed] = useState<boolean>(readCollapsed);
+  const [newResearchOpen, setNewResearchOpen] = useState(false);
 
   useEffect(() => {
     window.localStorage.setItem(STORAGE_KEY, collapsed ? "1" : "0");
   }, [collapsed]);
+
+  const openNewResearch = () => setNewResearchOpen(true);
 
   return (
     // h-dvh (dynamic viewport) — works on mobile Safari where 100vh
@@ -32,19 +36,26 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
       }`}
     >
       {collapsed ? (
-        <CollapsedRail onExpand={() => setCollapsed(false)} />
+        <CollapsedRail onExpand={() => setCollapsed(false)} onNewResearch={openNewResearch} />
       ) : (
-        <Sidebar onCollapse={() => setCollapsed(true)} />
+        <Sidebar onCollapse={() => setCollapsed(true)} onNewResearch={openNewResearch} />
       )}
       <main className="flex flex-col h-full min-h-0 min-w-0 overflow-hidden">
         <MobileBar />
         <div className="flex-1 min-h-0 min-w-0">{children}</div>
       </main>
+      <NewResearchModal open={newResearchOpen} onClose={() => setNewResearchOpen(false)} />
     </div>
   );
 }
 
-function CollapsedRail({ onExpand }: { onExpand: () => void }) {
+function CollapsedRail({
+  onExpand,
+  onNewResearch,
+}: {
+  onExpand: () => void;
+  onNewResearch: () => void;
+}) {
   return (
     <aside className="hidden md:flex md:flex-col md:items-center md:h-full md:overflow-hidden bg-bg-elev/50 py-4 gap-4">
       <Link
@@ -67,6 +78,24 @@ function CollapsedRail({ onExpand }: { onExpand: () => void }) {
       >
         <Chevron dir="right" />
       </button>
+      <button
+        type="button"
+        onClick={onNewResearch}
+        aria-label="New research"
+        title="New research"
+        className="grid h-8 w-8 place-items-center rounded-md text-ink-faint transition-colors hover:bg-bg/60 hover:text-accent"
+      >
+        <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" aria-hidden>
+          <path d="M12 5v14M5 12h14" />
+        </svg>
+      </button>
+
+      <nav className="mt-2 flex flex-col items-center gap-1">
+        <RailLink to="/app" end label="Copilot" icon={<CopilotIcon />} />
+        <RailLink to="/app/researches" label="Researches" icon={<ResearchesIcon />} />
+        <RailLink to="/app/chats" label="Chats" icon={<ChatsIcon />} />
+      </nav>
+
       <div className="mt-auto">
         <ThemeToggle />
       </div>
@@ -74,7 +103,40 @@ function CollapsedRail({ onExpand }: { onExpand: () => void }) {
   );
 }
 
-function Sidebar({ onCollapse }: { onCollapse: () => void }) {
+function RailLink({
+  to,
+  label,
+  end,
+  icon,
+}: {
+  to: string;
+  label: string;
+  end?: boolean;
+  icon: ReactNode;
+}) {
+  return (
+    <NavLink
+      to={to}
+      end={end}
+      title={label}
+      aria-label={label}
+      className={({ isActive }) =>
+        `grid h-8 w-8 place-items-center rounded-md transition-colors
+        ${isActive ? "bg-ink/[0.06] text-ink" : "text-ink-faint hover:bg-bg/60 hover:text-ink"}`
+      }
+    >
+      {icon}
+    </NavLink>
+  );
+}
+
+function Sidebar({
+  onCollapse,
+  onNewResearch,
+}: {
+  onCollapse: () => void;
+  onNewResearch: () => void;
+}) {
   return (
     <aside className="hidden md:flex md:flex-col md:h-full md:overflow-hidden bg-bg-elev/50">
       <div className="px-5 pt-5 pb-4 flex items-start justify-between gap-3">
@@ -91,12 +153,13 @@ function Sidebar({ onCollapse }: { onCollapse: () => void }) {
       </div>
 
       <div className="px-3">
-        <NewResearchButton />
+        <NewResearchButton onClick={onNewResearch} />
       </div>
 
       <nav className="mt-4 px-3 space-y-0.5">
-        <SidebarLink to="/app" end label="Copilot" />
-        <SidebarLink to="/app/researches" label="Researches" />
+        <SidebarLink to="/app" end label="Copilot" icon={<CopilotIcon />} />
+        <SidebarLink to="/app/researches" label="Researches" icon={<ResearchesIcon />} />
+        <SidebarLink to="/app/chats" label="Chats" icon={<ChatsIcon />} />
       </nav>
 
       <div className="mt-auto px-5 py-4 flex items-center justify-between">
@@ -110,12 +173,11 @@ function Sidebar({ onCollapse }: { onCollapse: () => void }) {
   );
 }
 
-function NewResearchButton() {
-  const navigate = useNavigate();
+function NewResearchButton({ onClick }: { onClick: () => void }) {
   return (
     <button
       type="button"
-      onClick={() => navigate("/app")}
+      onClick={onClick}
       className="group flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-ink-soft transition-colors hover:bg-ink/[0.04] hover:text-ink"
     >
       <span
@@ -141,18 +203,59 @@ function NewResearchButton() {
   );
 }
 
-function SidebarLink({ to, label, end }: { to: string; label: string; end?: boolean }) {
+function SidebarLink({
+  to,
+  label,
+  end,
+  icon,
+}: {
+  to: string;
+  label: string;
+  end?: boolean;
+  icon: ReactNode;
+}) {
   return (
     <NavLink
       to={to}
       end={end}
       className={({ isActive }) =>
-        `block rounded-lg px-2 py-2 text-sm transition-colors
+        `flex items-center gap-2.5 rounded-lg px-2 py-2 text-sm transition-colors
         ${isActive ? "bg-ink/[0.06] text-ink" : "text-ink-soft hover:bg-ink/[0.04] hover:text-ink"}`
       }
     >
-      {label}
+      <span aria-hidden className="grid h-5 w-5 shrink-0 place-items-center">
+        {icon}
+      </span>
+      <span>{label}</span>
     </NavLink>
+  );
+}
+
+function CopilotIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M12 3.5l1.6 4.3a3 3 0 0 0 1.8 1.8L19.7 11l-4.3 1.6a3 3 0 0 0-1.8 1.8L12 18.7l-1.6-4.3a3 3 0 0 0-1.8-1.8L4.3 11l4.3-1.6a3 3 0 0 0 1.8-1.8z" />
+      <path d="M18.5 16.5l.5 1.4 1.4.5-1.4.5-.5 1.4-.5-1.4-1.4-.5 1.4-.5z" />
+    </svg>
+  );
+}
+
+function ResearchesIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M14 3v4a1 1 0 0 0 1 1h4" />
+      <path d="M15 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+      <path d="M9 13h6M9 17h4" />
+    </svg>
+  );
+}
+
+function ChatsIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M21 12c0 4.4-4 8-9 8a9.9 9.9 0 0 1-4-.8L3 21l1.3-3.9A7.6 7.6 0 0 1 3 12c0-4.4 4-8 9-8s9 3.6 9 8z" />
+      <path d="M8.5 12h.01M12 12h.01M15.5 12h.01" />
+    </svg>
   );
 }
 

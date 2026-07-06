@@ -74,7 +74,7 @@ export function ResearchDropdown({
       </button>
 
       {open ? (
-        <div className="absolute bottom-full left-0 z-20 mb-2 flex max-h-80 w-72 flex-col overflow-hidden rounded-xl border border-rule/12 bg-bg-elev shadow-lg">
+        <div className="absolute bottom-full left-0 z-20 mb-2 flex max-h-80 w-72 flex-col overflow-hidden rounded-xl bg-bg-elev shadow-xl shadow-black/30">
           <div className="px-3 pb-2 pt-3">
             <input
               autoFocus

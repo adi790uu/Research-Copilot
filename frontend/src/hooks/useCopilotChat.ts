@@ -1,101 +1,80 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { copilotStore } from "../lib/copilotStore";
-import type {
-  CopilotConversation,
-  CopilotMessage,
-  EditProposal,
-} from "../lib/types";
+import type { CopilotMessage, EditProposal } from "../lib/types";
 
 export type CopilotTurn = CopilotMessage & { streaming?: boolean };
 
 interface State {
-  conversations: CopilotConversation[];
   activeId: string | null;
+  activeTitle: string;
   selectedBriefIds: string[];
   messages: CopilotTurn[];
-  loadingMessages: boolean;
+  loading: boolean;
   sending: boolean;
   error: string | null;
 }
 
 const EMPTY: State = {
-  conversations: [],
   activeId: null,
+  activeTitle: "New chat",
   selectedBriefIds: [],
   messages: [],
-  loadingMessages: false,
+  loading: false,
   sending: false,
   error: null,
 };
 
+interface Options {
+  /** The conversation to open, from the `?c=` URL param. `null` = fresh chat. */
+  conversationId: string | null;
+  /** Push a newly-created conversation id back to the URL. */
+  onActiveChange: (id: string | null) => void;
+}
+
 /**
- * Drives the Copilot: persistent conversations, the research selection that
- * scopes each one, streaming replies, and edit proposals. Backed by
- * `copilotStore` (a local seam) until the backend lands.
- *
- * `titleFor(briefId)` maps a research id to a display title for proposal cards.
+ * Drives one Copilot conversation. The active conversation is URL-driven
+ * (`conversationId`); the list of conversations lives in the Chats route.
+ * Backed by `copilotStore` until the backend lands.
  */
-export function useCopilotChat(titleFor: (briefId: string) => string) {
+export function useCopilotChat(titleFor: (briefId: string) => string, opts: Options) {
+  const { conversationId, onActiveChange } = opts;
   const [state, setState] = useState<State>(EMPTY);
   const abortRef = useRef<AbortController | null>(null);
+  const activeRef = useRef<string | null>(null);
+  activeRef.current = state.activeId;
 
   useEffect(() => {
     let cancelled = false;
-    copilotStore.listConversations().then(async (conversations) => {
+    abortRef.current?.abort();
+
+    if (!conversationId) {
+      setState({ ...EMPTY });
+      return;
+    }
+    if (conversationId === activeRef.current) return;
+
+    setState((s) => ({ ...s, loading: true, error: null }));
+    (async () => {
+      const convos = await copilotStore.listConversations();
+      const convo = convos.find((c) => c.id === conversationId);
+      const messages = await copilotStore.listMessages(conversationId);
       if (cancelled) return;
-      const active = conversations[0] ?? null;
-      const messages = active ? await copilotStore.listMessages(active.id) : [];
-      if (cancelled) return;
-      setState((s) => ({
-        ...s,
-        conversations,
-        activeId: active?.id ?? null,
-        selectedBriefIds: active?.selected_brief_ids ?? [],
+      setState({
+        activeId: conversationId,
+        activeTitle: convo?.title ?? "New chat",
+        selectedBriefIds: convo?.selected_brief_ids ?? [],
         messages,
-      }));
-    });
+        loading: false,
+        sending: false,
+        error: null,
+      });
+    })();
+
     return () => {
       cancelled = true;
     };
-  }, []);
-
-  const openConversation = useCallback(async (id: string) => {
-    abortRef.current?.abort();
-    setState((s) => ({ ...s, loadingMessages: true, error: null }));
-    const convo = (await copilotStore.listConversations()).find((c) => c.id === id);
-    const messages = await copilotStore.listMessages(id);
-    setState((s) => ({
-      ...s,
-      activeId: id,
-      selectedBriefIds: convo?.selected_brief_ids ?? [],
-      messages,
-      loadingMessages: false,
-    }));
-  }, []);
-
-  const newConversation = useCallback(() => {
-    abortRef.current?.abort();
-    setState((s) => ({
-      ...s,
-      activeId: null,
-      selectedBriefIds: [],
-      messages: [],
-      error: null,
-    }));
-  }, []);
-
-  const deleteConversation = useCallback(
-    async (id: string) => {
-      await copilotStore.deleteConversation(id);
-      const conversations = await copilotStore.listConversations();
-      setState((s) => {
-        if (s.activeId !== id) return { ...s, conversations };
-        return { ...s, conversations, activeId: null, selectedBriefIds: [], messages: [] };
-      });
-    },
-    [],
-  );
+  }, [conversationId]);
 
   const toggleResearch = useCallback((briefId: string) => {
     setState((s) => {
@@ -116,15 +95,12 @@ export function useCopilotChat(titleFor: (briefId: string) => string) {
       const ctrl = new AbortController();
       abortRef.current = ctrl;
 
-      let conversationId = state.activeId;
-      if (!conversationId) {
+      let convId = state.activeId;
+      if (!convId) {
         const convo = await copilotStore.createConversation(state.selectedBriefIds);
-        conversationId = convo.id;
-        setState((s) => ({
-          ...s,
-          activeId: convo.id,
-          conversations: [convo, ...s.conversations],
-        }));
+        convId = convo.id;
+        setState((s) => ({ ...s, activeId: convo.id }));
+        onActiveChange(convo.id);
       }
 
       const stamp = new Date().toISOString();
@@ -162,38 +138,31 @@ export function useCopilotChat(titleFor: (briefId: string) => string) {
 
       const titles = state.selectedBriefIds.map(titleFor);
       try {
-        const finalMsg = await copilotStore.sendMessage(
-          conversationId,
-          trimmed,
-          titles,
-          {
-            signal: ctrl.signal,
-            onToken: (chunk) =>
-              patchAssistant((t) => ({ ...t, content: t.content + chunk })),
-            onProposals: (proposals) =>
-              patchAssistant((t) => ({ ...t, proposals })),
-          },
-        );
+        const finalMsg = await copilotStore.sendMessage(convId, trimmed, titles, {
+          signal: ctrl.signal,
+          onToken: (chunk) => patchAssistant((t) => ({ ...t, content: t.content + chunk })),
+          onProposals: (proposals) => patchAssistant((t) => ({ ...t, proposals })),
+        });
         patchAssistant((t) => ({
           ...t,
           id: finalMsg.id,
           streaming: false,
           proposals: finalMsg.proposals,
         }));
-        const conversations = await copilotStore.listConversations();
-        setState((s) => ({ ...s, sending: false, conversations }));
+        const convo = (await copilotStore.listConversations()).find((c) => c.id === convId);
+        setState((s) => ({ ...s, sending: false, activeTitle: convo?.title ?? s.activeTitle }));
       } catch (e) {
         const msg = (e as Error).message ?? "Send failed";
         patchAssistant((t) => ({ ...t, streaming: false, content: t.content || `[error] ${msg}` }));
         setState((s) => ({ ...s, sending: false, error: msg }));
       }
     },
-    [state.activeId, state.selectedBriefIds, state.sending, titleFor],
+    [state.activeId, state.selectedBriefIds, state.sending, titleFor, onActiveChange],
   );
 
   const resolveProposal = useCallback(
     async (messageId: string, proposalId: string, status: "applied" | "discarded") => {
-      const { activeId } = state;
+      const activeId = activeRef.current;
       if (!activeId) return;
       await copilotStore.resolveProposal(activeId, messageId, proposalId, status);
       setState((s) => ({
@@ -210,16 +179,8 @@ export function useCopilotChat(titleFor: (briefId: string) => string) {
         ),
       }));
     },
-    [state],
+    [],
   );
 
-  return {
-    ...state,
-    openConversation,
-    newConversation,
-    deleteConversation,
-    toggleResearch,
-    send,
-    resolveProposal,
-  };
+  return { ...state, toggleResearch, send, resolveProposal };
 }

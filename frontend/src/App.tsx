@@ -3,10 +3,10 @@ import { Route, Routes } from "react-router-dom";
 import { DashboardLayout } from "./components/dashboard/DashboardLayout";
 import { SystemHealthGate } from "./components/SystemHealthGate";
 import { RequireAuth } from "./lib/auth";
+import Chats from "./routes/Chats";
 import Copilot from "./routes/Copilot";
 import Landing from "./routes/Landing";
 import Researches from "./routes/Researches";
-import SessionDetail from "./routes/SessionDetail";
 import SignInPage from "./routes/SignInPage";
 import SignUpPage from "./routes/SignUpPage";
 
@@ -27,7 +27,7 @@ export default function App() {
                 <Routes>
                   <Route index element={<Copilot />} />
                   <Route path="researches" element={<Researches />} />
-                  <Route path="sessions/:id" element={<SessionDetail />} />
+                  <Route path="chats" element={<Chats />} />
                 </Routes>
               </DashboardLayout>
             </RequireAuth>

@@ -73,10 +73,7 @@ export default function Researches() {
 function ResearchCard({ brief }: { brief: Brief }) {
   return (
     <li>
-      <Link
-        to={`/app/sessions/${brief.id}`}
-        className="group block rounded-2xl bg-bg-elev/60 px-5 py-4 transition-colors hover:bg-bg-elev"
-      >
+      <div className="block rounded-2xl bg-bg-elev/60 px-5 py-4">
         <div className="flex items-baseline flex-wrap gap-x-3 gap-y-1">
           <h3 className="text-[1.05rem] font-medium text-ink leading-tight truncate max-w-full">
             {brief.company_name}
@@ -97,7 +94,7 @@ function ResearchCard({ brief }: { brief: Brief }) {
           <time dateTime={brief.updated_at}>{formatRelative(brief.updated_at)}</time>
           <span>{shortId(brief.id, 6)}</span>
         </div>
-      </Link>
+      </div>
     </li>
   );
 }
