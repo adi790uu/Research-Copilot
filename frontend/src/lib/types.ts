@@ -311,6 +311,14 @@ export interface CopilotChatDetail extends CopilotConversation {
   messages: CopilotMessage[];
 }
 
+/** One page of chat threads (GET /copilot/chats?limit&offset). */
+export interface CopilotConversationPage {
+  items: CopilotConversation[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 /** Body for POST /copilot/chat. */
 export interface CopilotChatRequest {
   chat_id: string;

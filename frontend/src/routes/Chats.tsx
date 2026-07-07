@@ -1,24 +1,34 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
+import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 
 import { useApi } from "../lib/api";
 import { formatRelative } from "../lib/format";
+import { LoadMore } from "../components/ui/LoadMore";
 import type { CopilotConversation } from "../lib/types";
+
+const PAGE_SIZE = 5;
+const CHATS_KEY = ["copilot-chats", PAGE_SIZE];
 
 export default function Chats() {
   const navigate = useNavigate();
   const api = useApi();
-  const [conversations, setConversations] = useState<CopilotConversation[] | null>(null);
+  const queryClient = useQueryClient();
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const refresh = useCallback(
-    () => api.copilot.chats().then(setConversations).catch(() => setConversations([])),
-    [api],
-  );
+  const query = useInfiniteQuery({
+    queryKey: CHATS_KEY,
+    queryFn: ({ pageParam }) => api.copilot.chats({ limit: PAGE_SIZE, offset: pageParam }),
+    initialPageParam: 0,
+    getNextPageParam: (last, pages) => {
+      const loaded = pages.reduce((n, p) => n + p.items.length, 0);
+      return loaded < last.total ? loaded : undefined;
+    },
+  });
 
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
+  const items = query.data?.pages.flatMap((p) => p.items) ?? [];
+  const total = query.data?.pages[0]?.total ?? 0;
+  const remaining = Math.max(0, total - items.length);
 
   const remove = useCallback(
     async (id: string) => {
@@ -26,23 +36,21 @@ export default function Chats() {
       setDeletingId(id);
       try {
         await api.copilot.deleteChat(id);
-        await refresh();
+        await queryClient.invalidateQueries({ queryKey: CHATS_KEY });
       } finally {
         setDeletingId(null);
       }
     },
-    [api, refresh, deletingId],
+    [api, queryClient, deletingId],
   );
-
-  const items = conversations ?? [];
 
   return (
     <div className="mx-auto h-full max-w-4xl overflow-y-auto px-6 md:px-10 pt-10 md:pt-14 pb-24">
       <div className="flex items-baseline justify-between gap-6 pb-3 hairline-b">
         <p className="eyebrow">Chats</p>
-        {items.length > 0 ? (
+        {total > 0 ? (
           <p className="font-mono text-[0.625rem] uppercase tracking-eyebrow text-ink-faint">
-            {items.length} total
+            {total} total
           </p>
         ) : null}
       </div>
@@ -60,21 +68,30 @@ export default function Chats() {
       </div>
 
       <div className="mt-10">
-        {conversations === null ? (
+        {query.isLoading ? (
           <SkeletonRows />
         ) : items.length === 0 ? (
           <EmptyState />
         ) : (
-          <ul className="space-y-3">
-            {items.map((c) => (
-              <ChatCard
-                key={c.id}
-                conversation={c}
-                deleting={deletingId === c.id}
-                onDelete={() => remove(c.id)}
+          <>
+            <ul className="space-y-3">
+              {items.map((c) => (
+                <ChatCard
+                  key={c.id}
+                  conversation={c}
+                  deleting={deletingId === c.id}
+                  onDelete={() => remove(c.id)}
+                />
+              ))}
+            </ul>
+            {query.hasNextPage ? (
+              <LoadMore
+                onClick={() => query.fetchNextPage()}
+                loading={query.isFetchingNextPage}
+                remaining={remaining}
               />
-            ))}
-          </ul>
+            ) : null}
+          </>
         )}
       </div>
     </div>

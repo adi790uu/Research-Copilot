@@ -10,7 +10,7 @@ import type {
   ChatTurnPayload,
   CopilotChatDetail,
   CopilotChatRequest,
-  CopilotConversation,
+  CopilotConversationPage,
   ResearchJob,
   ResearchJobEvent,
   ResearchTask,
@@ -109,8 +109,8 @@ interface ApiClient {
     listJobs: (id: string) => Promise<ResearchJob[]>;
   };
   copilot: {
-    /** All of the user's chat threads, newest first. */
-    chats: () => Promise<CopilotConversation[]>;
+    /** A page of the user's chat threads, newest first. */
+    chats: (params?: { limit?: number; offset?: number }) => Promise<CopilotConversationPage>;
     /** One thread with its full message history. */
     chat: (chatId: string) => Promise<CopilotChatDetail>;
     deleteChat: (chatId: string) => Promise<void>;
@@ -172,7 +172,13 @@ function buildClient(fetcher: Fetcher, getToken: TokenSource): ApiClient {
       listJobs: (id) => fetcher<ResearchJob[]>(`/briefs/${id}/jobs`),
     },
     copilot: {
-      chats: () => fetcher<CopilotConversation[]>("/copilot/chats"),
+      chats: (params) => {
+        const q = new URLSearchParams();
+        if (params?.limit != null) q.set("limit", String(params.limit));
+        if (params?.offset != null) q.set("offset", String(params.offset));
+        const qs = q.toString();
+        return fetcher<CopilotConversationPage>(`/copilot/chats${qs ? `?${qs}` : ""}`);
+      },
       chat: (chatId) => fetcher<CopilotChatDetail>(`/copilot/chats/${chatId}`),
       deleteChat: (chatId) =>
         fetcher<void>(`/copilot/chats/${chatId}`, { method: "DELETE" }),

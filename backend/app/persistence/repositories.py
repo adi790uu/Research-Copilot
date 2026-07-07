@@ -270,13 +270,18 @@ class ChatRepository:
         )
         return result.scalar_one_or_none()
 
-    async def list(self) -> Sequence[ChatORM]:
+    async def list(self, *, limit: int = 20, offset: int = 0) -> tuple[Sequence[ChatORM], int]:
+        total = await self._db.scalar(
+            select(func.count()).select_from(ChatORM).where(ChatORM.user_id == self._user_id)
+        )
         result = await self._db.execute(
             select(ChatORM)
             .where(ChatORM.user_id == self._user_id)
             .order_by(ChatORM.updated_at.desc())
+            .limit(limit)
+            .offset(offset)
         )
-        return result.scalars().all()
+        return result.scalars().all(), int(total or 0)
 
     async def create(self, chat_id: str, *, title: str = "New chat") -> ChatORM:
         row = ChatORM(id=chat_id, user_id=self._user_id, title=title)

@@ -1,27 +1,30 @@
-import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 
 import { ApiError, useApi } from "../lib/api";
 import { formatRelative, shortId } from "../lib/format";
 import type { Brief } from "../lib/types";
+import { LoadMore } from "../components/ui/LoadMore";
 import { Status, statusLabel, statusTone } from "../components/ui/Pill";
 
 const PAGE_SIZE = 12;
 
 export default function Researches() {
   const api = useApi();
-  const [page, setPage] = useState(0); // zero-indexed
 
-  const query = useQuery({
-    queryKey: ["briefs", { limit: PAGE_SIZE, offset: page * PAGE_SIZE }],
-    queryFn: () => api.briefs.list({ limit: PAGE_SIZE, offset: page * PAGE_SIZE }),
-    placeholderData: (prev) => prev,
+  const query = useInfiniteQuery({
+    queryKey: ["briefs", "infinite", PAGE_SIZE],
+    queryFn: ({ pageParam }) => api.briefs.list({ limit: PAGE_SIZE, offset: pageParam }),
+    initialPageParam: 0,
+    getNextPageParam: (last, pages) => {
+      const loaded = pages.reduce((n, p) => n + p.items.length, 0);
+      return loaded < last.total ? loaded : undefined;
+    },
   });
 
-  const items = query.data?.items ?? [];
-  const total = query.data?.total ?? 0;
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const items = query.data?.pages.flatMap((p) => p.items) ?? [];
+  const total = query.data?.pages[0]?.total ?? 0;
+  const remaining = Math.max(0, total - items.length);
 
   return (
     <div className="mx-auto h-full max-w-4xl overflow-y-auto px-6 md:px-10 pt-10 md:pt-14 pb-24">
@@ -55,12 +58,11 @@ export default function Researches() {
                 <ResearchCard key={brief.id} brief={brief} />
               ))}
             </ul>
-            {totalPages > 1 ? (
-              <Pagination
-                page={page}
-                totalPages={totalPages}
-                onPage={setPage}
-                stale={query.isFetching}
+            {query.hasNextPage ? (
+              <LoadMore
+                onClick={() => query.fetchNextPage()}
+                loading={query.isFetchingNextPage}
+                remaining={remaining}
               />
             ) : null}
           </>
@@ -96,49 +98,6 @@ function ResearchCard({ brief }: { brief: Brief }) {
         </div>
       </div>
     </li>
-  );
-}
-
-function Pagination({
-  page,
-  totalPages,
-  onPage,
-  stale,
-}: {
-  page: number;
-  totalPages: number;
-  onPage: (p: number) => void;
-  stale: boolean;
-}) {
-  const atFirst = page === 0;
-  const atLast = page >= totalPages - 1;
-  return (
-    <div className="mt-8 flex items-center justify-center gap-4">
-      <button
-        type="button"
-        onClick={() => onPage(Math.max(0, page - 1))}
-        disabled={atFirst}
-        className="font-mono text-[0.625rem] uppercase tracking-eyebrow text-ink-faint transition-colors hover:text-ink disabled:opacity-30"
-      >
-        ← Prev
-      </button>
-      <span
-        className={`font-mono text-[0.625rem] uppercase tracking-eyebrow text-ink-faint tabular-nums transition-opacity ${
-          stale ? "opacity-50" : "opacity-100"
-        }`}
-        aria-live="polite"
-      >
-        Page {page + 1} / {totalPages}
-      </span>
-      <button
-        type="button"
-        onClick={() => onPage(Math.min(totalPages - 1, page + 1))}
-        disabled={atLast}
-        className="font-mono text-[0.625rem] uppercase tracking-eyebrow text-ink-faint transition-colors hover:text-ink disabled:opacity-30"
-      >
-        Next →
-      </button>
-    </div>
   );
 }
 

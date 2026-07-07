@@ -57,18 +57,23 @@ def _extract_text(chunk: Any) -> str:
     return ""
 
 
-async def list_chats(db: AsyncSession, *, user_id: str) -> list[dict]:
+async def list_chats(db: AsyncSession, *, user_id: str, limit: int = 20, offset: int = 0) -> dict:
     repo = ChatRepository(db, user_id)
-    chats = await repo.list()
-    return [
-        {
-            "id": c.id,
-            "title": c.title,
-            "created_at": c.created_at.isoformat() if c.created_at else None,
-            "updated_at": c.updated_at.isoformat() if c.updated_at else None,
-        }
-        for c in chats
-    ]
+    chats, total = await repo.list(limit=limit, offset=offset)
+    return {
+        "items": [
+            {
+                "id": c.id,
+                "title": c.title,
+                "created_at": c.created_at.isoformat() if c.created_at else None,
+                "updated_at": c.updated_at.isoformat() if c.updated_at else None,
+            }
+            for c in chats
+        ],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 async def get_chat(db: AsyncSession, *, user_id: str, chat_id: str) -> dict | None:

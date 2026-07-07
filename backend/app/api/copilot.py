@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -65,10 +65,12 @@ async def copilot_chat(
 
 @router.get("/chats")
 async def list_chats(
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db_session),
     user: CurrentUser = Depends(get_current_user),
-) -> list[dict]:
-    return await copilot_service.list_chats(db, user_id=user.id)
+) -> dict:
+    return await copilot_service.list_chats(db, user_id=user.id, limit=limit, offset=offset)
 
 
 @router.get("/chats/{chat_id}")
