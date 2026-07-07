@@ -47,6 +47,7 @@ export default function Copilot() {
       />
       <ChatThread
         messages={chat.messages}
+        loading={chat.loading}
         firstName={firstName}
         selectedCount={chat.selectedBriefIds.length}
         onResolveProposal={chat.resolveProposal}

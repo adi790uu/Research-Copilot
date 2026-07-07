@@ -23,7 +23,7 @@ from app.domain.events import (
     WorkflowEvent,
 )
 from app.persistence.db import get_sessionmaker
-from app.persistence.repositories import BriefRepository, MessageRepository
+from app.persistence.repositories import BriefRepository
 from app.services import job_store
 from app.services.worker_trigger import trigger_research_worker
 from app.workflow.graph import build_graph
@@ -70,17 +70,18 @@ class WorkflowService:
         *,
         brief_id: str,
         user_id: str,
-        content: str,
         clarification_answered: bool = False,
         clarification_answers: list[dict] | None = None,
     ) -> None:
+        # Phase-1 transcript lives in the LangGraph checkpointer; the only thing
+        # we persist to the DB here is the folded-in clarification answers.
+        if not clarification_answered:
+            return
         sessionmaker = get_sessionmaker()
         async with sessionmaker() as db:
-            await MessageRepository(db, brief_id).add(role="user", content=content, kind="workflow")
-            if clarification_answered:
-                await BriefRepository(db, user_id).mark_clarification_answered(
-                    brief_id, clarification_answers
-                )
+            await BriefRepository(db, user_id).mark_clarification_answered(
+                brief_id, clarification_answers
+            )
             await db.commit()
 
     async def _store_clarification(
@@ -122,7 +123,6 @@ class WorkflowService:
             await self._record_user_turn(
                 brief_id=brief_id,
                 user_id=user_id,
-                content=text,
                 clarification_answered=clarification_answered,
                 clarification_answers=clarification_answers,
             )

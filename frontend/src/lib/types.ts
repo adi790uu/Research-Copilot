@@ -297,12 +297,23 @@ export interface CopilotMessage {
   created_at: string;
 }
 
-/** A saved chat thread. `selected_brief_ids` scopes which researches the
- * assistant grounds on and may edit. */
+/** A saved chat thread. The researches to ground on are sent fresh with each
+ * message (see `CopilotChatRequest`) rather than stored on the thread. */
 export interface CopilotConversation {
   id: string;
   title: string;
-  selected_brief_ids: string[];
   created_at: string;
   updated_at: string;
+}
+
+/** A chat thread with its full message history (GET /copilot/chats/:id). */
+export interface CopilotChatDetail extends CopilotConversation {
+  messages: CopilotMessage[];
+}
+
+/** Body for POST /copilot/chat. */
+export interface CopilotChatRequest {
+  chat_id: string;
+  research_ids: string[];
+  message: string;
 }

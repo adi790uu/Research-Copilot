@@ -73,8 +73,33 @@ class BriefORM(Base):
         order_by="ResearchJobORM.created_at.desc()",
         lazy="selectin",
     )
+
+
+class ChatORM(Base):
+    """A Copilot conversation. Scoped to a user. The set of researches to ground
+    on is supplied by the client with each message (not persisted), so the chat
+    only owns its message history. The client generates the id so a fresh thread
+    can start streaming before its first turn is persisted."""
+
+    __tablename__ = "chats"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    title: Mapped[str] = mapped_column(String(200), nullable=False, default="New chat")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow, onupdate=_utcnow
+    )
+
     messages: Mapped[list["MessageORM"]] = relationship(
-        back_populates="brief",
+        back_populates="chat",
         cascade="all, delete-orphan",
         order_by="MessageORM.created_at",
         lazy="selectin",
@@ -85,22 +110,19 @@ class MessageORM(Base):
     __tablename__ = "messages"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    brief_id: Mapped[str] = mapped_column(
-        String(32),
-        ForeignKey("briefs.id", ondelete="CASCADE"),
+    chat_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("chats.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     role: Mapped[str] = mapped_column(String(16), nullable=False)
-    kind: Mapped[str] = mapped_column(
-        String(16), nullable=False, server_default="followup", index=True
-    )
     content: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow
     )
 
-    brief: Mapped[BriefORM] = relationship(back_populates="messages")
+    chat: Mapped[ChatORM] = relationship(back_populates="messages")
 
 
 class ResearchJobORM(Base):

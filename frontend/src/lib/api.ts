@@ -8,7 +8,9 @@ import type {
   BriefCreate,
   BriefPage,
   ChatTurnPayload,
-  FollowupMessage,
+  CopilotChatDetail,
+  CopilotChatRequest,
+  CopilotConversation,
   ResearchJob,
   ResearchJobEvent,
   ResearchTask,
@@ -105,18 +107,16 @@ interface ApiClient {
     /** Most-recent job for this brief (404 if none). */
     latestJob: (id: string) => Promise<ResearchJob>;
     listJobs: (id: string) => Promise<ResearchJob[]>;
-    /** Persisted chat turns, optionally scoped to one surface:
-     * `workflow` (phase-1 intro + clarification) or `followup` (post-report). */
-    listMessages: (
-      id: string,
-      kind?: "workflow" | "followup"
-    ) => Promise<FollowupMessage[]>;
-    /** Post a follow-up message; returns the raw streaming Response. */
-    postMessage: (
-      id: string,
-      content: string,
-      signal?: AbortSignal
-    ) => Promise<Response>;
+  };
+  copilot: {
+    /** All of the user's chat threads, newest first. */
+    chats: () => Promise<CopilotConversation[]>;
+    /** One thread with its full message history. */
+    chat: (chatId: string) => Promise<CopilotChatDetail>;
+    deleteChat: (chatId: string) => Promise<void>;
+    /** Send a message; the chat is created if `chat_id` doesn't exist yet.
+     * Returns the raw streaming Response so the caller can read SSE tokens. */
+    send: (payload: CopilotChatRequest, signal?: AbortSignal) => Promise<Response>;
   };
   jobs: {
     get: (id: string) => Promise<ResearchJob>;
@@ -170,11 +170,13 @@ function buildClient(fetcher: Fetcher, getToken: TokenSource): ApiClient {
         }),
       latestJob: (id) => fetcher<ResearchJob>(`/briefs/${id}/job`),
       listJobs: (id) => fetcher<ResearchJob[]>(`/briefs/${id}/jobs`),
-      listMessages: (id, kind) =>
-        fetcher<FollowupMessage[]>(
-          `/briefs/${id}/messages${kind ? `?kind=${kind}` : ""}`
-        ),
-      postMessage: async (id, content, signal) => {
+    },
+    copilot: {
+      chats: () => fetcher<CopilotConversation[]>("/copilot/chats"),
+      chat: (chatId) => fetcher<CopilotChatDetail>(`/copilot/chats/${chatId}`),
+      deleteChat: (chatId) =>
+        fetcher<void>(`/copilot/chats/${chatId}`, { method: "DELETE" }),
+      send: async (payload, signal) => {
         const headers: Record<string, string> = {
           "Content-Type": "application/json",
           Accept: "text/event-stream",
@@ -183,10 +185,10 @@ function buildClient(fetcher: Fetcher, getToken: TokenSource): ApiClient {
           const token = getToken();
           if (token) headers.Authorization = `Bearer ${token}`;
         }
-        return fetch(`${BASE_URL}/briefs/${id}/messages`, {
+        return fetch(`${BASE_URL}/copilot/chat`, {
           method: "POST",
           headers,
-          body: JSON.stringify({ content }),
+          body: JSON.stringify(payload),
           signal,
         });
       },

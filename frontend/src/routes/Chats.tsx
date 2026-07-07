@@ -1,17 +1,20 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
-import { copilotStore } from "../lib/copilotStore";
+import { useApi } from "../lib/api";
 import { formatRelative } from "../lib/format";
 import type { CopilotConversation } from "../lib/types";
 
 export default function Chats() {
   const navigate = useNavigate();
+  const api = useApi();
   const [conversations, setConversations] = useState<CopilotConversation[] | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const refresh = useCallback(() => {
-    copilotStore.listConversations().then(setConversations);
-  }, []);
+  const refresh = useCallback(
+    () => api.copilot.chats().then(setConversations).catch(() => setConversations([])),
+    [api],
+  );
 
   useEffect(() => {
     refresh();
@@ -19,10 +22,16 @@ export default function Chats() {
 
   const remove = useCallback(
     async (id: string) => {
-      await copilotStore.deleteConversation(id);
-      refresh();
+      if (deletingId) return;
+      setDeletingId(id);
+      try {
+        await api.copilot.deleteChat(id);
+        await refresh();
+      } finally {
+        setDeletingId(null);
+      }
     },
-    [refresh],
+    [api, refresh, deletingId],
   );
 
   const items = conversations ?? [];
@@ -58,7 +67,12 @@ export default function Chats() {
         ) : (
           <ul className="space-y-3">
             {items.map((c) => (
-              <ChatCard key={c.id} conversation={c} onDelete={() => remove(c.id)} />
+              <ChatCard
+                key={c.id}
+                conversation={c}
+                deleting={deletingId === c.id}
+                onDelete={() => remove(c.id)}
+              />
             ))}
           </ul>
         )}
@@ -69,40 +83,59 @@ export default function Chats() {
 
 function ChatCard({
   conversation,
+  deleting,
   onDelete,
 }: {
   conversation: CopilotConversation;
+  deleting: boolean;
   onDelete: () => void;
 }) {
-  const count = conversation.selected_brief_ids.length;
   return (
-    <li className="group relative">
+    <li className={`group relative transition-opacity ${deleting ? "opacity-50" : ""}`}>
       <Link
         to={`/app?c=${conversation.id}`}
-        className="block rounded-2xl bg-bg-elev/60 px-5 py-4 transition-colors hover:bg-bg-elev"
+        aria-disabled={deleting}
+        className={`block rounded-2xl bg-bg-elev/60 px-5 py-4 transition-colors hover:bg-bg-elev ${
+          deleting ? "pointer-events-none" : ""
+        }`}
       >
         <h3 className="max-w-full truncate pr-8 text-[1.05rem] font-medium leading-tight text-ink">
           {conversation.title}
         </h3>
         <div className="mt-2.5 flex items-center gap-3 font-mono text-[0.625rem] uppercase tracking-wider text-ink-faint/70">
           <time dateTime={conversation.updated_at}>{formatRelative(conversation.updated_at)}</time>
-          <span>
-            {count > 0
-              ? `${count} ${count === 1 ? "research" : "researches"} in context`
-              : "no research selected"}
-          </span>
         </div>
       </Link>
       <button
         type="button"
         onClick={onDelete}
-        aria-label="Delete chat"
-        title="Delete chat"
-        className="absolute right-4 top-4 text-ink-faint/0 transition-colors group-hover:text-ink-faint/70 hover:!text-bad"
+        disabled={deleting}
+        aria-busy={deleting}
+        aria-label={deleting ? "Deleting chat" : "Delete chat"}
+        title={deleting ? "Deleting…" : "Delete chat"}
+        className={`absolute right-4 top-4 transition-colors ${
+          deleting
+            ? "text-ink-faint"
+            : "text-ink-faint/0 group-hover:text-ink-faint/70 hover:!text-bad"
+        }`}
       >
-        <TrashIcon />
+        {deleting ? <Spinner /> : <TrashIcon />}
       </button>
     </li>
+  );
+}
+
+function Spinner() {
+  return (
+    <svg viewBox="0 0 24 24" width={14} height={14} fill="none" className="animate-spin" aria-hidden>
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth={2} opacity={0.25} />
+      <path
+        d="M21 12a9 9 0 0 0-9-9"
+        stroke="currentColor"
+        strokeWidth={2}
+        strokeLinecap="round"
+      />
+    </svg>
   );
 }
 

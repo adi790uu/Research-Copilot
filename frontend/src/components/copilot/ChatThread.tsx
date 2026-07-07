@@ -5,11 +5,13 @@ import type { CopilotTurn } from "../../hooks/useCopilotChat";
 
 export function ChatThread({
   messages,
+  loading,
   firstName,
   selectedCount,
   onResolveProposal,
 }: {
   messages: CopilotTurn[];
+  loading: boolean;
   firstName: string | null;
   selectedCount: number;
   onResolveProposal: (
@@ -23,6 +25,12 @@ export function ChatThread({
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages]);
+
+  // Loading an existing conversation's history from the DB — show the message
+  // skeleton so we never flash the empty state during the transition.
+  if (loading) {
+    return <ThreadSkeleton />;
+  }
 
   if (messages.length === 0) {
     return <EmptyState firstName={firstName} selectedCount={selectedCount} />;
@@ -188,5 +196,38 @@ function EmptyState({
 function Caret() {
   return (
     <span className="ml-0.5 inline-block h-[1.05em] w-[2px] translate-y-[0.15em] animate-pulse bg-accent align-baseline" />
+  );
+}
+
+function ThreadSkeleton() {
+  return (
+    <div className="flex-1 min-h-0 overflow-y-auto">
+      <div
+        className="mx-auto flex max-w-2xl flex-col gap-6 px-6 py-8 animate-pulse"
+        aria-busy
+        aria-label="Loading conversation"
+      >
+        {[
+          { user: "w-2/5", lines: ["w-[92%]", "w-[85%]", "w-[68%]", "w-[38%]"] },
+          { user: "w-1/3", lines: ["w-[88%]", "w-[74%]", "w-[46%]"] },
+        ].map((block, i) => (
+          <div key={i} className="flex flex-col gap-6">
+            <div className="flex justify-end">
+              <div className={`h-9 rounded-2xl rounded-br-md bg-ink/[0.06] ${block.user}`} />
+            </div>
+            <div className="flex flex-col gap-2.5">
+              {block.lines.map((w, j) => (
+                <div
+                  key={j}
+                  className={`h-3.5 rounded-sm ${w} ${
+                    j === block.lines.length - 1 ? "bg-ink/5" : "bg-ink/10"
+                  }`}
+                />
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }

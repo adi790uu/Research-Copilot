@@ -7,7 +7,8 @@ import structlog
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import auth, briefs, health, users, workflow
+from app.api import auth, briefs, copilot, health, users, workflow
+from app.copilot.graph import build_graph as build_copilot_graph
 from app.core.config import get_settings
 from app.core.errors import register_error_handlers
 from app.core.logging import configure_logging, get_logger
@@ -39,6 +40,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     async with checkpointer_lifespan() as saver:
         app.state.checkpointer = saver
         app.state.workflow_service = WorkflowService(checkpointer=saver)
+        app.state.copilot_graph = build_copilot_graph(checkpointer=saver)
         log.info("checkpointer_ready")
 
         poll_task: asyncio.Task | None = None
@@ -87,6 +89,7 @@ def create_app() -> FastAPI:
     app.include_router(briefs.router)
     app.include_router(workflow.router)
     app.include_router(workflow.jobs_router)
+    app.include_router(copilot.router)
 
     return app
 

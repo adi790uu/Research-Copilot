@@ -7,9 +7,9 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import CurrentUser, get_current_user
@@ -19,7 +19,7 @@ from app.domain.events import WorkflowEvent
 from app.domain.report import Report, ReportContent
 from app.persistence.db import get_db_session
 from app.persistence.repositories import BriefRepository
-from app.services import job_store, report_chat
+from app.services import job_store
 from app.services.pdf_export import PDFRenderError, report_to_pdf
 from app.services.workflow_service import WorkflowService
 
@@ -151,60 +151,6 @@ async def get_latest_job(
     if job is None:
         raise NotFoundError(f"No job for brief {brief_id}")
     return job
-
-
-class FollowupMessage(BaseModel):
-    content: str = Field(min_length=1, max_length=4000)
-
-
-@router.get("/messages")
-async def list_brief_messages(
-    brief_id: str,
-    kind: Literal["workflow", "followup"] | None = Query(default=None),
-    db: AsyncSession = Depends(get_db_session),
-    user: CurrentUser = Depends(get_current_user),
-) -> list[dict]:
-    return await report_chat.list_messages(db, brief_id=brief_id, user_id=user.id, kind=kind)
-
-
-@router.post("/messages")
-async def post_brief_message(
-    brief_id: str,
-    payload: FollowupMessage,
-    request: Request,
-    db: AsyncSession = Depends(get_db_session),
-    user: CurrentUser = Depends(get_current_user),
-) -> StreamingResponse:
-
-    async def generator() -> AsyncIterator[bytes]:
-        try:
-            async for chunk in report_chat.stream_followup(
-                db,
-                brief_id=brief_id,
-                user_id=user.id,
-                question=payload.content,
-            ):
-                if await request.is_disconnected():
-                    return
-                yield f"event: token\ndata: {_sse_escape(chunk)}\n\n".encode()
-            yield b"event: done\ndata: {}\n\n"
-        except Exception as exc:  # noqa: BLE001
-            msg = str(exc).replace("\n", " ")
-            yield f"event: error\ndata: {msg}\n\n".encode()
-
-    return StreamingResponse(
-        generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-            "Connection": "keep-alive",
-        },
-    )
-
-
-def _sse_escape(text: str) -> str:
-    return text.replace("\r\n", "\n").replace("\n", "\ndata: ")
 
 
 jobs_router = APIRouter(prefix="/jobs", tags=["jobs"])

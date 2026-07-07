@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { copilotStore } from "../lib/copilotStore";
-import type { CopilotMessage, EditProposal } from "../lib/types";
+import { useApi } from "../lib/api";
+import { readSSE } from "../lib/sse";
+import type { CopilotMessage } from "../lib/types";
 
 export type CopilotTurn = CopilotMessage & { streaming?: boolean };
 
@@ -25,6 +26,16 @@ const EMPTY: State = {
   error: null,
 };
 
+const TITLE_MAX = 60;
+
+function titleFrom(text: string): string {
+  const clean = text.trim().replace(/\s+/g, " ");
+  return clean.length > TITLE_MAX ? `${clean.slice(0, TITLE_MAX)}…` : clean || "New chat";
+}
+
+const newId = (): string =>
+  crypto.randomUUID?.() ?? `id-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
 interface Options {
   /** The conversation to open, from the `?c=` URL param. `null` = fresh chat. */
   conversationId: string | null;
@@ -33,55 +44,69 @@ interface Options {
 }
 
 /**
- * Drives one Copilot conversation. The active conversation is URL-driven
- * (`conversationId`); the list of conversations lives in the Chats route.
- * Backed by `copilotStore` until the backend lands.
+ * Drives one Copilot conversation, backed by the `/copilot` API. The active
+ * conversation is URL-driven (`conversationId`); the chat id is generated
+ * client-side on the first send and created server-side with that first turn.
  */
-export function useCopilotChat(titleFor: (briefId: string) => string, opts: Options) {
+export function useCopilotChat(_titleFor: (briefId: string) => string, opts: Options) {
   const { conversationId, onActiveChange } = opts;
-  const [state, setState] = useState<State>(EMPTY);
+  const api = useApi();
+  // Deep-linked to an existing chat (?c=…)? Start in loading so the thread shows
+  // the skeleton from the first paint instead of flashing the empty state before
+  // the fetch effect runs.
+  const [state, setState] = useState<State>(() =>
+    conversationId ? { ...EMPTY, loading: true } : EMPTY,
+  );
   const abortRef = useRef<AbortController | null>(null);
   const activeRef = useRef<string | null>(null);
   activeRef.current = state.activeId;
 
   useEffect(() => {
-    let cancelled = false;
-    abortRef.current?.abort();
-
     if (!conversationId) {
+      abortRef.current?.abort();
       setState({ ...EMPTY });
       return;
     }
+    // Already the active thread — e.g. we just created it locally and the URL is
+    // only now catching up. Don't refetch, and crucially don't abort: the send
+    // that created this chat is still streaming its reply.
     if (conversationId === activeRef.current) return;
 
+    // Switching to a different conversation: cancel any in-flight stream/load.
+    abortRef.current?.abort();
+    let cancelled = false;
     setState((s) => ({ ...s, loading: true, error: null }));
     (async () => {
-      const convos = await copilotStore.listConversations();
-      const convo = convos.find((c) => c.id === conversationId);
-      const messages = await copilotStore.listMessages(conversationId);
-      if (cancelled) return;
-      setState({
-        activeId: conversationId,
-        activeTitle: convo?.title ?? "New chat",
-        selectedBriefIds: convo?.selected_brief_ids ?? [],
-        messages,
-        loading: false,
-        sending: false,
-        error: null,
-      });
+      try {
+        const chat = await api.copilot.chat(conversationId);
+        if (cancelled) return;
+        setState({
+          activeId: chat.id,
+          activeTitle: chat.title,
+          // Research selection isn't persisted; the user re-picks per session.
+          selectedBriefIds: [],
+          messages: chat.messages,
+          loading: false,
+          sending: false,
+          error: null,
+        });
+      } catch {
+        if (cancelled) return;
+        // Unknown / not-yet-persisted id: treat as a fresh thread on this id.
+        setState({ ...EMPTY });
+      }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [conversationId]);
+  }, [conversationId, api]);
 
   const toggleResearch = useCallback((briefId: string) => {
     setState((s) => {
       const next = s.selectedBriefIds.includes(briefId)
         ? s.selectedBriefIds.filter((id) => id !== briefId)
         : [...s.selectedBriefIds, briefId];
-      if (s.activeId) void copilotStore.setSelectedResearches(s.activeId, next);
       return { ...s, selectedBriefIds: next };
     });
   }, []);
@@ -96,11 +121,11 @@ export function useCopilotChat(titleFor: (briefId: string) => string, opts: Opti
       abortRef.current = ctrl;
 
       let convId = state.activeId;
+      const isFirstTurn = !convId;
       if (!convId) {
-        const convo = await copilotStore.createConversation(state.selectedBriefIds);
-        convId = convo.id;
-        setState((s) => ({ ...s, activeId: convo.id }));
-        onActiveChange(convo.id);
+        convId = newId();
+        setState((s) => ({ ...s, activeId: convId }));
+        onActiveChange(convId);
       }
 
       const stamp = new Date().toISOString();
@@ -121,6 +146,7 @@ export function useCopilotChat(titleFor: (briefId: string) => string, opts: Opti
         ...s,
         sending: true,
         error: null,
+        activeTitle: isFirstTurn ? titleFrom(trimmed) : s.activeTitle,
         messages: [...s.messages, userTurn, assistantTurn],
       }));
 
@@ -136,35 +162,41 @@ export function useCopilotChat(titleFor: (briefId: string) => string, opts: Opti
           return { ...s, messages };
         });
 
-      const titles = state.selectedBriefIds.map(titleFor);
       try {
-        const finalMsg = await copilotStore.sendMessage(convId, trimmed, titles, {
-          signal: ctrl.signal,
+        const res = await api.copilot.send(
+          { chat_id: convId, research_ids: state.selectedBriefIds, message: trimmed },
+          ctrl.signal,
+        );
+        let errored: string | null = null;
+        await readSSE(res, {
           onToken: (chunk) => patchAssistant((t) => ({ ...t, content: t.content + chunk })),
-          onProposals: (proposals) => patchAssistant((t) => ({ ...t, proposals })),
+          onError: (msg) => {
+            errored = msg;
+          },
         });
         patchAssistant((t) => ({
           ...t,
-          id: finalMsg.id,
           streaming: false,
-          proposals: finalMsg.proposals,
+          content: t.content || (errored ? `[error] ${errored}` : ""),
         }));
-        const convo = (await copilotStore.listConversations()).find((c) => c.id === convId);
-        setState((s) => ({ ...s, sending: false, activeTitle: convo?.title ?? s.activeTitle }));
+        setState((s) => ({ ...s, sending: false, error: errored }));
       } catch (e) {
+        if (ctrl.signal.aborted) {
+          setState((s) => ({ ...s, sending: false }));
+          return;
+        }
         const msg = (e as Error).message ?? "Send failed";
         patchAssistant((t) => ({ ...t, streaming: false, content: t.content || `[error] ${msg}` }));
         setState((s) => ({ ...s, sending: false, error: msg }));
       }
     },
-    [state.activeId, state.selectedBriefIds, state.sending, titleFor, onActiveChange],
+    [state.activeId, state.selectedBriefIds, state.sending, onActiveChange, api],
   );
 
+  // Edit proposals are not produced by the backend yet; kept as a no-op so the
+  // thread UI's handler stays wired for when they land.
   const resolveProposal = useCallback(
     async (messageId: string, proposalId: string, status: "applied" | "discarded") => {
-      const activeId = activeRef.current;
-      if (!activeId) return;
-      await copilotStore.resolveProposal(activeId, messageId, proposalId, status);
       setState((s) => ({
         ...s,
         messages: s.messages.map((m) =>
@@ -172,7 +204,7 @@ export function useCopilotChat(titleFor: (briefId: string) => string, opts: Opti
             ? m
             : {
                 ...m,
-                proposals: m.proposals?.map((p: EditProposal) =>
+                proposals: m.proposals?.map((p) =>
                   p.id === proposalId ? { ...p, status } : p,
                 ),
               },
