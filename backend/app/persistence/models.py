@@ -56,6 +56,9 @@ class BriefORM(Base):
     title: Mapped[str] = mapped_column(String(200), nullable=False, default="New research")
     status: Mapped[str] = mapped_column(String(40), nullable=False, default="pending")
     clarification_question: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # The generated research plan, persisted once it's ready so the brief can be
+    # reopened at the approval step without re-reading the LangGraph checkpoint.
+    research_plan: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     contact_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     contact_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
     contact_resolution: Mapped[dict | None] = mapped_column(JSON, nullable=True)

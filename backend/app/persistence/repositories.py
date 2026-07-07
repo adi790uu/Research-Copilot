@@ -162,6 +162,14 @@ class BriefRepository:
         await self._db.flush()
         return row
 
+    async def set_research_plan(self, brief_id: str, plan: dict) -> BriefORM | None:
+        row = await self.get(brief_id)
+        if row is None:
+            return None
+        row.research_plan = plan
+        await self._db.flush()
+        return row
+
     async def mark_clarification_answered(
         self, brief_id: str, answers: list[dict] | None = None
     ) -> BriefORM | None:

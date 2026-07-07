@@ -92,6 +92,12 @@ class WorkflowService:
             await BriefRepository(db, user_id).set_clarification_question(brief_id, questions)
             await db.commit()
 
+    async def _store_plan(self, *, brief_id: str, user_id: str, plan: dict) -> None:
+        sessionmaker = get_sessionmaker()
+        async with sessionmaker() as db:
+            await BriefRepository(db, user_id).set_research_plan(brief_id, plan)
+            await db.commit()
+
     async def run_phase1(
         self,
         *,
@@ -136,6 +142,7 @@ class WorkflowService:
             user_id=user_id,
             set_status=self._set_status,
             store_clarification=self._store_clarification,
+            store_plan=self._store_plan,
         )
 
     async def approve_plan(self, *, brief_id: str, user_id: str) -> str:
@@ -175,6 +182,7 @@ async def _phase1_event_iter(
     user_id: str,
     set_status: Any,
     store_clarification: Any,
+    store_plan: Any,
 ) -> AsyncIterator[WorkflowEvent]:
     yield RunStarted(brief_id=brief_id)
     started = time.perf_counter()
@@ -231,6 +239,7 @@ async def _phase1_event_iter(
 
     plan = values.get("research_plan")
     if plan:
+        await store_plan(brief_id=brief_id, user_id=user_id, plan=plan)
         await set_status(brief_id=brief_id, user_id=user_id, status="awaiting_plan_approval")
         yield PlanReady(brief_id=brief_id, plan=plan)
         return

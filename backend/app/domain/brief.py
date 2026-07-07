@@ -47,6 +47,7 @@ class Brief(BaseModel):
     objective: str
     status: BriefStatus
     clarification_question: dict | None = None
+    research_plan: dict | None = None
     contact_name: str | None = None
     contact_email: str | None = None
     contact_resolution: ContactResolution | None = None

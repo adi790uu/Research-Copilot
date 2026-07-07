@@ -1,11 +1,13 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, NavLink, useNavigate } from "react-router-dom";
 
 import { useAuth } from "../../lib/auth";
+import type { Brief } from "../../lib/types";
 
 import { ThemeToggle } from "../ui/ThemeToggle";
 import { Wordmark } from "../ui/Wordmark";
 import { NewResearchModal } from "./NewResearchModal";
+import { NewResearchContext } from "./newResearchContext";
 
 const STORAGE_KEY = "rc:sidebar-collapsed";
 
@@ -17,19 +19,38 @@ function readCollapsed(): boolean {
 export function DashboardLayout({ children }: { children: ReactNode }) {
   const [collapsed, setCollapsed] = useState<boolean>(readCollapsed);
   const [newResearchOpen, setNewResearchOpen] = useState(false);
+  const [resumeBrief, setResumeBrief] = useState<Brief | null>(null);
 
   useEffect(() => {
     window.localStorage.setItem(STORAGE_KEY, collapsed ? "1" : "0");
   }, [collapsed]);
 
-  const openNewResearch = () => setNewResearchOpen(true);
+  const openNewResearch = () => {
+    setResumeBrief(null);
+    setNewResearchOpen(true);
+  };
+
+  const newResearch = useMemo(
+    () => ({
+      openNew: () => {
+        setResumeBrief(null);
+        setNewResearchOpen(true);
+      },
+      openResume: (brief: Brief) => {
+        setResumeBrief(brief);
+        setNewResearchOpen(true);
+      },
+    }),
+    [],
+  );
 
   return (
-    // h-dvh (dynamic viewport) — works on mobile Safari where 100vh
-    // overflows behind the address bar. grid-rows-1 hard-binds the row
-    // height so child h-full propagates predictably.
-    <div
-      className={`h-dvh grid grid-rows-1 md:grid-rows-1 ${
+    <NewResearchContext.Provider value={newResearch}>
+      {/* h-dvh (dynamic viewport) — works on mobile Safari where 100vh
+          overflows behind the address bar. grid-rows-1 hard-binds the row
+          height so child h-full propagates predictably. */}
+      <div
+        className={`h-dvh grid grid-rows-1 md:grid-rows-1 ${
         collapsed
           ? "md:grid-cols-[3.25rem_1fr]"
           : "md:grid-cols-[17rem_1fr]"
@@ -44,8 +65,16 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
         <MobileBar />
         <div className="flex-1 min-h-0 min-w-0">{children}</div>
       </main>
-      <NewResearchModal open={newResearchOpen} onClose={() => setNewResearchOpen(false)} />
-    </div>
+        <NewResearchModal
+          open={newResearchOpen}
+          onClose={() => {
+            setNewResearchOpen(false);
+            setResumeBrief(null);
+          }}
+          resumeBrief={resumeBrief}
+        />
+      </div>
+    </NewResearchContext.Provider>
   );
 }
 

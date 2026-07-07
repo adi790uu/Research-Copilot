@@ -5,12 +5,19 @@ import { ApiError, useApi } from "../lib/api";
 import { formatRelative, shortId } from "../lib/format";
 import type { Brief } from "../lib/types";
 import { LoadMore } from "../components/ui/LoadMore";
+import { useNewResearch } from "../components/dashboard/newResearchContext";
 import { Status, statusLabel, statusTone } from "../components/ui/Pill";
+
+/** Briefs paused mid-setup can be reopened in the modal to finish the flow. */
+function isResumable(status: Brief["status"]): boolean {
+  return status === "awaiting_clarification" || status === "awaiting_plan_approval";
+}
 
 const PAGE_SIZE = 12;
 
 export default function Researches() {
   const api = useApi();
+  const { openResume } = useNewResearch();
 
   const query = useInfiniteQuery({
     queryKey: ["briefs", "infinite", PAGE_SIZE],
@@ -55,7 +62,7 @@ export default function Researches() {
           <>
             <ul className="space-y-3">
               {items.map((brief) => (
-                <ResearchCard key={brief.id} brief={brief} />
+                <ResearchCard key={brief.id} brief={brief} onResume={openResume} />
               ))}
             </ul>
             {query.hasNextPage ? (
@@ -72,31 +79,52 @@ export default function Researches() {
   );
 }
 
-function ResearchCard({ brief }: { brief: Brief }) {
+function ResearchCard({ brief, onResume }: { brief: Brief; onResume: (b: Brief) => void }) {
+  const resumable = isResumable(brief.status);
+  const resumeLabel =
+    brief.status === "awaiting_clarification" ? "Answer questions" : "Review plan";
+
+  const body = (
+    <>
+      <div className="flex items-baseline flex-wrap gap-x-3 gap-y-1">
+        <h3 className="text-[1.05rem] font-medium text-ink leading-tight truncate max-w-full">
+          {brief.company_name}
+        </h3>
+        <Status tone={statusTone(brief.status)} pulse={brief.status === "running"}>
+          {statusLabel(brief.status)}
+        </Status>
+        {brief.contact_name ? (
+          <span className="font-mono text-[0.625rem] uppercase tracking-wider text-ink-faint/70">
+            · meeting {brief.contact_name}
+          </span>
+        ) : null}
+      </div>
+      <p className="mt-1 text-sm text-ink-soft line-clamp-1 max-w-prose">{brief.objective}</p>
+      <div className="mt-2.5 flex items-center gap-3 font-mono text-[0.625rem] uppercase tracking-wider text-ink-faint/70">
+        <time dateTime={brief.updated_at}>{formatRelative(brief.updated_at)}</time>
+        <span>{shortId(brief.id, 6)}</span>
+        {resumable ? <span className="text-accent">{resumeLabel} →</span> : null}
+      </div>
+    </>
+  );
+
+  if (resumable) {
+    return (
+      <li>
+        <button
+          type="button"
+          onClick={() => onResume(brief)}
+          className="block w-full rounded-2xl bg-bg-elev/60 px-5 py-4 text-left transition-colors hover:bg-bg-elev"
+        >
+          {body}
+        </button>
+      </li>
+    );
+  }
+
   return (
     <li>
-      <div className="block rounded-2xl bg-bg-elev/60 px-5 py-4">
-        <div className="flex items-baseline flex-wrap gap-x-3 gap-y-1">
-          <h3 className="text-[1.05rem] font-medium text-ink leading-tight truncate max-w-full">
-            {brief.company_name}
-          </h3>
-          <Status tone={statusTone(brief.status)} pulse={brief.status === "running"}>
-            {statusLabel(brief.status)}
-          </Status>
-          {brief.contact_name ? (
-            <span className="font-mono text-[0.625rem] uppercase tracking-wider text-ink-faint/70">
-              · meeting {brief.contact_name}
-            </span>
-          ) : null}
-        </div>
-        <p className="mt-1 text-sm text-ink-soft line-clamp-1 max-w-prose">
-          {brief.objective}
-        </p>
-        <div className="mt-2.5 flex items-center gap-3 font-mono text-[0.625rem] uppercase tracking-wider text-ink-faint/70">
-          <time dateTime={brief.updated_at}>{formatRelative(brief.updated_at)}</time>
-          <span>{shortId(brief.id, 6)}</span>
-        </div>
-      </div>
+      <div className="block rounded-2xl bg-bg-elev/60 px-5 py-4">{body}</div>
     </li>
   );
 }

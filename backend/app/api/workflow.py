@@ -39,7 +39,7 @@ def _service(request: Request) -> WorkflowService:
 router = APIRouter(prefix="/briefs/{brief_id}", tags=["workflow"])
 
 
-ChatTurnKind = Literal["start", "answer", "subscribe"]
+ChatTurnKind = Literal["start", "answer"]
 
 
 class ClarificationAnswer(BaseModel):
@@ -70,7 +70,7 @@ async def chat(
         raise AppError("'answer' requires a non-empty message")
 
     svc = _service(request)
-    message = None if payload.kind == "subscribe" else payload.message
+    message = payload.message
     answers = (
         [a.model_dump() for a in payload.clarification_answers]
         if payload.clarification_answers

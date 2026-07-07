@@ -36,6 +36,9 @@ export interface Brief {
   objective: string;
   status: BriefStatus;
   clarification_question?: ClarificationState | null;
+  /** The generated plan, persisted once ready so an awaiting-approval brief can
+   * be reopened at the plan step without an extra fetch. */
+  research_plan?: ResearchPlan | null;
   contact_name?: string | null;
   contact_email?: string | null;
   contact_resolution?: ContactResolution | null;
@@ -199,7 +202,7 @@ export interface ReportContent {
 // Phase 1 chat turn — POST /briefs/{id}/chat, response body is SSE.
 // ---------------------------------------------------------------------------
 
-export type ChatTurnKind = "start" | "answer" | "subscribe";
+export type ChatTurnKind = "start" | "answer";
 
 export interface ChatTurnPayload {
   kind: ChatTurnKind;
@@ -252,19 +255,6 @@ export interface ResearchTask {
   status: "running" | "completed" | "failed";
   created_at: string;
   updated_at: string;
-}
-
-// ---------------------------------------------------------------------------
-// Follow-up chat (post-report). One row per persisted turn.
-// ---------------------------------------------------------------------------
-
-export type FollowupRole = "user" | "assistant";
-
-export interface FollowupMessage {
-  id: string;
-  role: FollowupRole;
-  content: string;
-  created_at: string;
 }
 
 // ---------------------------------------------------------------------------
