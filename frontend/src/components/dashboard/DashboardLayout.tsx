@@ -123,6 +123,7 @@ function CollapsedRail({
         <RailLink to="/app" end label="Copilot" icon={<CopilotIcon />} />
         <RailLink to="/app/researches" label="Researches" icon={<ResearchesIcon />} />
         <RailLink to="/app/chats" label="Chats" icon={<ChatsIcon />} />
+        <RailLink to="/app/company" label="Your company" icon={<CompanyIcon />} />
       </nav>
 
       <div className="mt-auto">
@@ -189,6 +190,7 @@ function Sidebar({
         <SidebarLink to="/app" end label="Copilot" icon={<CopilotIcon />} />
         <SidebarLink to="/app/researches" label="Researches" icon={<ResearchesIcon />} />
         <SidebarLink to="/app/chats" label="Chats" icon={<ChatsIcon />} />
+        <SidebarLink to="/app/company" label="Your company" icon={<CompanyIcon />} />
       </nav>
 
       <div className="mt-auto px-5 py-4 flex items-center justify-between">
@@ -284,6 +286,17 @@ function ChatsIcon() {
     <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <path d="M21 12c0 4.4-4 8-9 8a9.9 9.9 0 0 1-4-.8L3 21l1.3-3.9A7.6 7.6 0 0 1 3 12c0-4.4 4-8 9-8s9 3.6 9 8z" />
       <path d="M8.5 12h.01M12 12h.01M15.5 12h.01" />
+    </svg>
+  );
+}
+
+function CompanyIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M3 21h18" />
+      <path d="M5 21V7l8-4v18" />
+      <path d="M19 21V11l-6-4" />
+      <path d="M9 9h.01M9 12h.01M9 15h.01" />
     </svg>
   );
 }

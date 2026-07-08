@@ -43,6 +43,14 @@ class UserRepository:
         row.last_seen_at = datetime.now(UTC)
         await self._db.flush()
 
+    async def set_company_context(self, user_id: str, context: dict) -> UserORM | None:
+        row = await self.get(user_id)
+        if row is None:
+            return None
+        row.company_context = context
+        await self._db.flush()
+        return row
+
     async def counts(self, user_id: str) -> tuple[int, int]:
         briefs = await self._db.scalar(
             select(func.count()).select_from(BriefORM).where(BriefORM.user_id == user_id)

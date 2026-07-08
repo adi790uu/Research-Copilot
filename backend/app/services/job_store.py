@@ -6,12 +6,7 @@ import uuid
 from sqlalchemy import select
 
 from app.persistence.db import get_sessionmaker
-from app.persistence.models import (
-    ResearchJobEventORM,
-    ResearchJobORM,
-    ResearchJobResearcherORM,
-    ResearchTaskORM,
-)
+from app.persistence.models import ResearchJobORM, ResearchTaskORM
 
 
 async def create_job(brief_id: str, user_id: str, research_plan: str) -> str:
@@ -64,83 +59,57 @@ async def get_job_by_brief(brief_id: str) -> dict | None:
         return _serialize_job(row)
 
 
+def _parse_artifact(raw: str | dict | None) -> dict | None:
+    """Artifacts are stored as JSON strings by the worker; return a dict."""
+    if raw is None:
+        return None
+    if isinstance(raw, dict):
+        return raw
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+
+
 def _serialize_job(row: ResearchJobORM) -> dict:
-    sources = row.sources
-    if isinstance(sources, str):
-        try:
-            sources = json.loads(sources)
-        except json.JSONDecodeError:
-            sources = []
     return {
         "id": row.id,
         "brief_id": row.brief_id,
         "user_id": row.user_id,
         "status": row.status,
         "research_plan": row.research_plan,
-        "final_report": row.final_report,
-        "sources": sources or [],
-        "report_pdf_key": row.report_pdf_key,
+        "company_report": _parse_artifact(row.company_report),
+        "person_report": _parse_artifact(row.person_report),
+        "pitch": _parse_artifact(row.pitch),
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
     }
 
 
-async def get_job_researchers(job_id: str) -> list[dict]:
+async def get_progress_by_brief(brief_id: str) -> dict:
+    """Latest job's status + its tasks for a brief, for the running-card poll.
+
+    Returns ``{"status": <job status or "pending">, "tasks": [{title, status}]}``.
+    A brief with no job yet reports ``pending`` with no tasks.
+    """
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as db:
         result = await db.execute(
-            select(ResearchJobResearcherORM)
-            .where(ResearchJobResearcherORM.job_id == job_id)
-            .order_by(ResearchJobResearcherORM.id)
+            select(ResearchJobORM)
+            .where(ResearchJobORM.brief_id == brief_id)
+            .order_by(ResearchJobORM.created_at.desc())
+            .limit(1)
         )
-        rows = result.scalars().all()
-        return [
-            {
-                "topic": r.topic,
-                "summary": r.summary or "",
-                "sources": r.sources or [],
-                "created_at": r.created_at.isoformat() if r.created_at else None,
-            }
-            for r in rows
-        ]
+        job = result.scalar_one_or_none()
+        if job is None:
+            return {"status": "pending", "tasks": []}
 
-
-async def get_job_events(job_id: str) -> list[dict]:
-    sessionmaker = get_sessionmaker()
-    async with sessionmaker() as db:
-        result = await db.execute(
-            select(ResearchJobEventORM)
-            .where(ResearchJobEventORM.job_id == job_id)
-            .order_by(ResearchJobEventORM.id)
-        )
-        rows = result.scalars().all()
-        return [
-            {
-                "event_type": r.event_type,
-                "data": r.data,
-                "created_at": r.created_at.isoformat() if r.created_at else None,
-            }
-            for r in rows
-        ]
-
-
-async def get_job_tasks(job_id: str) -> list[dict]:
-    sessionmaker = get_sessionmaker()
-    async with sessionmaker() as db:
-        result = await db.execute(
+        task_rows = await db.execute(
             select(ResearchTaskORM)
-            .where(ResearchTaskORM.job_id == job_id)
+            .where(ResearchTaskORM.job_id == job.id)
             .order_by(ResearchTaskORM.created_at)
         )
-        rows = result.scalars().all()
-        return [
-            {
-                "id": r.id,
-                "title": r.title,
-                "description": r.description,
-                "status": r.status,
-                "created_at": r.created_at.isoformat() if r.created_at else None,
-                "updated_at": r.updated_at.isoformat() if r.updated_at else None,
-            }
-            for r in rows
+        tasks = [
+            {"title": t.title, "status": t.status} for t in task_rows.scalars().all()
         ]
+        return {"status": job.status, "tasks": tasks}

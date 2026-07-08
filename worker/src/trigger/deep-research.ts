@@ -1,6 +1,6 @@
 import { logger, schemaTask } from "@trigger.dev/sdk/v3";
 import { z } from "zod";
-import { getBrief, updateJobResult, updateJobStatus } from "@/db/jobs";
+import { getBrief, updateBriefStatus, updateJobResult, updateJobStatus } from "@/db/jobs";
 import { graph2 } from "@/graph";
 
 const payloadSchema = z.object({
@@ -58,6 +58,7 @@ export const deepResearch = schemaTask({
           personName,
           personLinkedinUrl,
           personTitle,
+          companyContext: brief.companyContext ?? null,
         },
         {
           configurable: {
@@ -72,20 +73,24 @@ export const deepResearch = schemaTask({
         },
       );
 
-      if (!result.report) throw new Error("Graph produced no report");
-      await updateJobResult(
-        jobId,
-        JSON.stringify(result.report),
-        result.report.sources,
-      );
+      if (!result.companyReport) throw new Error("Graph produced no company report");
+      await updateJobResult(jobId, {
+        companyReport: JSON.stringify(result.companyReport),
+        personReport: result.personReport ? JSON.stringify(result.personReport) : null,
+        pitch: result.pitch ? JSON.stringify(result.pitch) : null,
+      });
+      await updateBriefStatus(briefId, "completed");
       logger.info("Deep research complete", {
         jobId,
-        sources: result.report.sources.length,
+        companySources: result.companyReport.sources.length,
+        person: result.personReport?.verified ?? false,
+        pitch: result.pitch !== null,
       });
 
-      return { jobId, sources: result.report.sources.length };
+      return { jobId, companySources: result.companyReport.sources.length };
     } catch (err) {
       await updateJobStatus(jobId, "failed");
+      await updateBriefStatus(briefId, "failed");
       throw err;
     }
   },

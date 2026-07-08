@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 
 import { useResearchWizard } from "../../hooks/useResearchWizard";
 import type {
@@ -38,8 +39,10 @@ export function NewResearchModal({
   resumeBrief?: Brief | null;
 }) {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const wizard = useResearchWizard();
   const [form, setForm] = useState<FormState>(EMPTY);
+  const [starting, setStarting] = useState(false);
   const firstFieldRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -59,6 +62,7 @@ export function NewResearchModal({
   useEffect(() => {
     if (open) {
       setForm(EMPTY);
+      setStarting(false);
       if (resumeBrief) wizard.resume(resumeBrief);
       else wizard.reset();
     }
@@ -74,6 +78,21 @@ export function NewResearchModal({
     if (wizard.briefId) queryClient.invalidateQueries({ queryKey: ["briefs"] });
     wizard.reset();
     onClose();
+  }
+
+  async function handleStart() {
+    if (starting) return;
+    setStarting(true);
+    try {
+      await wizard.approve();
+      queryClient.invalidateQueries({ queryKey: ["briefs"] });
+      wizard.reset();
+      onClose();
+      navigate("/app/researches");
+    } catch {
+      // Leave the modal on the plan step so the user can retry.
+      setStarting(false);
+    }
   }
 
   const disabled =
@@ -204,7 +223,12 @@ export function NewResearchModal({
         ) : wizard.step === "clarify" ? (
           <ClarifyStep questions={wizard.questions} onSubmit={wizard.submitAnswers} />
         ) : wizard.step === "plan" && wizard.plan ? (
-          <PlanStep plan={wizard.plan} onCancel={handleClose} />
+          <PlanStep
+            plan={wizard.plan}
+            onCancel={handleClose}
+            onStart={handleStart}
+            starting={starting}
+          />
         ) : (
           <ErrorStep
             message={wizard.error ?? "Something went wrong"}
@@ -318,7 +342,17 @@ function ClarifyStep({
   );
 }
 
-function PlanStep({ plan, onCancel }: { plan: ResearchPlan; onCancel: () => void }) {
+function PlanStep({
+  plan,
+  onCancel,
+  onStart,
+  starting,
+}: {
+  plan: ResearchPlan;
+  onCancel: () => void;
+  onStart: () => void;
+  starting: boolean;
+}) {
   return (
     <div>
       <div className="mt-6 max-h-[55vh] space-y-6 overflow-y-auto pr-1">
@@ -343,17 +377,15 @@ function PlanStep({ plan, onCancel }: { plan: ResearchPlan; onCancel: () => void
       </div>
 
       <div className="mt-7 flex items-center justify-end gap-3">
-        <button type="button" onClick={onCancel} className="btn-ghost">
+        <button type="button" onClick={onCancel} disabled={starting} className="btn-ghost">
           Cancel
         </button>
-        <button
-          type="button"
-          // TODO(next iteration): approve the plan and launch the job
-          // (api.briefs.approvePlan → poll the job under Researches).
-          onClick={() => {}}
-          className="btn-primary"
-        >
-          Start research<span className="arrow">→</span>
+        <button type="button" onClick={onStart} disabled={starting} className="btn-primary">
+          {starting ? (
+            <>Starting<span className="arrow">…</span></>
+          ) : (
+            <>Start research<span className="arrow">→</span></>
+          )}
         </button>
       </div>
     </div>

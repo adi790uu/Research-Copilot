@@ -1,4 +1,4 @@
-import { bigserial, index, json, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { index, json, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 
 export type SourceType = "company_site" | "web" | "linkedin" | "twitter" | "reddit" | "social";
 
@@ -23,6 +23,23 @@ export type ContactResolution = {
   location?: string | null;
 };
 
+// The seller's own company profile, reused across researches to build the
+// pitch. Mirrors the backend `CompanyContext`. A pitch is generated only when
+// at least one field is filled in.
+export type CompanyContext = {
+  what_you_sell?: string;
+  value_props?: string;
+  icp?: string;
+  differentiators?: string;
+  proof_points?: string;
+  notes?: string;
+};
+
+export const users = pgTable("users", {
+  id: text("id").primaryKey(),
+  companyContext: json("company_context").$type<CompanyContext>(),
+});
+
 export const briefs = pgTable("briefs", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull(),
@@ -41,41 +58,16 @@ export const researchJobs = pgTable("research_jobs", {
   userId: text("user_id").notNull(),
   status: text("status").notNull().default("pending"),
   researchPlan: text("research_plan"),
-  finalReport: text("final_report"),
-  sources: json("sources").$type<Source[]>(),
-  reportPdfKey: text("report_pdf_key"),
+  // Company research (factual). Carries the research summary + sources.
+  companyReport: text("company_report"),
+  // Person research on the named meeting contact (null when there's no contact).
+  personReport: text("person_report"),
+  // Sales pitch built from company + person research and the seller's context.
+  // Null when the seller has no company context.
+  pitch: text("pitch"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
-
-export const researchJobEvents = pgTable(
-  "research_job_events",
-  {
-    id: bigserial("id", { mode: "number" }).primaryKey(),
-    jobId: text("job_id")
-      .notNull()
-      .references(() => researchJobs.id, { onDelete: "cascade" }),
-    eventType: text("event_type").notNull(),
-    data: json("data").notNull().default({}),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [index("idx_research_job_events_job_id").on(t.jobId)],
-);
-
-export const researchJobResearchers = pgTable(
-  "research_job_researchers",
-  {
-    id: bigserial("id", { mode: "number" }).primaryKey(),
-    jobId: text("job_id")
-      .notNull()
-      .references(() => researchJobs.id, { onDelete: "cascade" }),
-    topic: text("topic").notNull(),
-    summary: text("summary"),
-    sources: json("sources").$type<Source[]>(),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [index("idx_research_job_researchers_job_id").on(t.jobId)],
-);
 
 export const researchTasks = pgTable(
   "research_tasks",

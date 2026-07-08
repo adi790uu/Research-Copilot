@@ -135,6 +135,7 @@ export function finalReportPrompt(args: {
   companyName: string;
   website: string;
   researchBrief: string;
+  objective: string;
   personName?: string;
   findings: string;
   sourcesBlock: string;
@@ -144,6 +145,12 @@ export function finalReportPrompt(args: {
     ? `\n\nThis brief also covers a named meeting contact, ${args.personName}. If <findings> contains grounded material about them, include a dedicated "Meeting contact" section (their role, background, and likely priorities, cited like everything else) and a "Suggested opening & talking points" section that synthesizes the company signal and this person's priorities into a few specific, usable opening lines and discovery questions — grounded in <findings>, not invented. If <findings> explicitly says this person could not be verified, say so plainly in the "Meeting contact" section instead of guessing, and keep the talking-points section company-only.`
     : "";
   return `You are writing a company-research brief on ${args.companyName} (${args.website}).${personGuidance}
+
+The reader had ONE objective. Everything you write serves it:
+
+<objective>
+${args.objective}
+</objective>
 
 ## Inputs
 
@@ -163,11 +170,12 @@ Today's date is ${args.date}.
 
 ## Output shape
 
-There is NO fixed template. Decide the sections that best deliver on the research mandate given what the findings actually support. Produce:
+There is NO fixed template. Decide the sections that best deliver on the objective given what the findings actually support. Produce:
+- \`answer\`: 2 to 4 punchy sentences that DIRECTLY answer the reader's <objective> — the single most important payoff, the first thing they read. Lead with the conclusion, cite inline. If the findings can't fully answer the objective, say what you can and name the gap plainly.
 - \`summary\`: a tight executive summary of the whole brief (the key takeaways for the reader), with inline citations.
 - \`sections\`: an ordered list of sections. For each: a short \`heading\`, \`content\` (clear, specific prose grounded in the findings, cite source IDs inline as \`[src_xxxxxxxx]\`), and \`source_ids\` (every ID actually cited in that section).
 
-Let the material drive the structure: cover what matters for the mandate, in the order that reads best. Fold genuine gaps into the relevant section or a dedicated "Open questions / unknowns" section rather than padding.
+Let the objective drive the structure: cover what the reader needs to fulfil their objective, in the order that reads best, and leave out what doesn't serve it. Fold genuine gaps into the relevant section or a dedicated "Open questions / unknowns" section rather than padding.
 
 ## Citations — the findings already carry them
 Facts in <findings> are already tagged with the citation id of the source that backs them, e.g. \`[src_ab12cd34]\`. Your job is to CARRY THOSE IDS THROUGH: when you state a fact, copy the exact id(s) attached to it in the findings. Do not renumber, reassign, or invent ids. Put every id you cite in that section's \`source_ids\`.
@@ -179,8 +187,97 @@ Facts in <findings> are already tagged with the citation id of the source that b
 - Citations use the EXACT ids present in <findings> / the sources block. Do not invent IDs.`;
 }
 
+export function personReportPrompt(args: {
+  personName: string;
+  personTitle?: string;
+  companyName: string;
+  findings: string;
+  sourcesBlock: string;
+  date: string;
+}): string {
+  return `You are writing a short profile of a specific person: ${args.personName}${
+    args.personTitle ? ` (${args.personTitle})` : ""
+  }, the meeting contact at ${args.companyName}.
+
+Today's date is ${args.date}.
+
+## Inputs
+
+<findings>
+${args.findings}
+</findings>
+
+<sources>
+${args.sourcesBlock}
+</sources>
+
+## Identity gate — read first
+The findings come from a tool that only surfaces a profile it could tie to ${args.companyName}. Judge the evidence yourself:
+- If <findings> confidently identify ${args.personName} at ${args.companyName} (a matching profile, role, or activity), set \`verified: true\` and write the profile.
+- If <findings> say the person could NOT be verified, or contain only unrelated namesakes or nothing usable, set \`verified: false\`, leave \`summary\` and \`sections\` empty, and set \`headline\` to a plain statement that the contact could not be verified. NEVER attribute a bio, title, or background to an unverified person.
+
+## Output shape (when verified)
+- \`headline\`: one line — who they are and their current role.
+- \`summary\`: a tight, grounded paragraph — background and likely priorities relevant to a sales conversation.
+- \`sections\`: optional deeper sections (e.g. "Background", "Recent activity", "Likely priorities"), each with \`heading\`, \`content\`, and \`source_ids\`.
+
+## Citations
+Facts in <findings> are tagged with the source id that backs them, e.g. \`[src_ab12cd34]\`. Carry those ids through verbatim: every factual sentence ends with at least one \`[src_xxxxxxxx]\`, and each section's \`source_ids\` lists the ids it cites. Do not invent ids or facts.`;
+}
+
+export function pitchPrompt(args: {
+  companyName: string;
+  objective: string;
+  personName?: string;
+  sellerContext: string;
+  companyReport: string;
+  personReport: string;
+  date: string;
+}): string {
+  const personLine = args.personName
+    ? `\n\nThere is a named meeting contact, ${args.personName}. If <person_research> verified them, tailor the angle and talking points to their role and priorities. If they are unverified, keep the pitch account-level and do NOT invent anything about the person.`
+    : "";
+  return `You are a senior B2B sales strategist. Using research on the prospect and the SELLER's own profile, write the best possible pitch the seller can take into this account.${personLine}
+
+The seller's objective for this account:
+
+<objective>
+${args.objective}
+</objective>
+
+## The seller (who is pitching)
+<seller>
+${args.sellerContext}
+</seller>
+
+## The prospect: ${args.companyName}
+<company_research>
+${args.companyReport}
+</company_research>
+
+<person_research>
+${args.personReport}
+</person_research>
+
+Today's date is ${args.date}.
+
+## What to produce
+A pitch that connects the SELLER's value to what the research actually shows about ${args.companyName}. Ground every claim about the prospect in <company_research>/<person_research>; ground every claim about what the seller offers in <seller>.
+- \`headline\`: one sentence — the sharpest angle to open with for THIS account.
+- \`why_now\`: the timing or trigger from the research that makes this relevant now (a signal, news, hire, gap). If nothing time-sensitive surfaced, say so briefly.
+- \`talking_points\`: 3-5 points, each mapping a specific seller value prop / differentiator to a specific thing the research revealed about the prospect. Each has a \`point\` and a \`rationale\` (the signal or priority it maps to).
+- \`opening_message\`: a few sentences the seller could send/say to open — specific to this account, not a template. Warm, concrete, no fluff.
+- \`objections\`: 2-3 likely objections from this buyer with grounded responses that lean on the seller's differentiators and proof points.
+
+## Rules
+- Be specific and grounded. No generic sales filler ("leverage synergies", "best-in-class"). Every point should only make sense for THIS pairing of seller and prospect.
+- Do not fabricate research signals or seller capabilities. If the research is thin on something, work with what's there rather than inventing.
+- Do not use citation ids in the pitch — this is the seller-facing pitch, written in plain prose.`;
+}
+
 export function reviewReportPrompt(args: {
   companyName: string;
+  objective: string;
   personName?: string;
   draft: string;
   findings: string;
@@ -191,6 +288,12 @@ export function reviewReportPrompt(args: {
     ? ` The draft may include a "Meeting contact" section on ${args.personName} and a "Suggested opening & talking points" section — keep both, apply the same grounding bar to them, and never let the talking points assert anything about ${args.personName} that isn't in <findings>.`
     : "";
   return `You are a senior editor producing the FINAL version of a company-research brief on ${args.companyName}.${personGuidance}
+
+The reader's objective, which the brief must serve above all:
+
+<objective>
+${args.objective}
+</objective>
 
 <draft_report_json>
 ${args.draft}
@@ -204,9 +307,10 @@ Available source IDs: ${args.validSourceIds}
 
 Today's date is ${args.date}.
 
-Return the polished report in the same shape (\`summary\` + \`sections\` of \`heading\` / \`content\` / \`source_ids\`). You must:
-1. Keep every grounded claim. Do NOT invent facts. You may reorder, merge, or split sections if it reads better, but do not drop substance.
-2. Tighten prose — kill filler, fix transitions, remove any self-referential language about the research process.
-3. **Firm up grounding — this is the priority.** Every factual sentence must end with at least one \`[src_xxxxxxxx]\` citation. Where <findings> support a currently-uncited claim, add the correct id. Where a claim has no support in <findings>, cut it or hedge it. Drop any citation whose id isn't in the available list, and keep each section's \`source_ids\` equal to the ids actually cited in its prose.
-4. \`content\` is prose about ${args.companyName} and nothing else. NEVER restate these instructions or describe the task.`;
+Return the polished report in the same shape (\`answer\` + \`summary\` + \`sections\` of \`heading\` / \`content\` / \`source_ids\`). You must:
+1. Keep \`answer\` a direct, grounded response to the <objective> — 2 to 4 sentences, conclusion first. Tighten it if needed, but it must still answer the objective.
+2. Keep every grounded claim. Do NOT invent facts. You may reorder, merge, or split sections if it reads better, but do not drop substance.
+3. Tighten prose — kill filler, fix transitions, remove any self-referential language about the research process.
+4. **Firm up grounding — this is the priority.** Every factual sentence must end with at least one \`[src_xxxxxxxx]\` citation. Where <findings> support a currently-uncited claim, add the correct id. Where a claim has no support in <findings>, cut it or hedge it. Drop any citation whose id isn't in the available list, and keep each section's \`source_ids\` equal to the ids actually cited in its prose.
+5. \`content\` is prose about ${args.companyName} and nothing else. NEVER restate these instructions or describe the task.`;
 }

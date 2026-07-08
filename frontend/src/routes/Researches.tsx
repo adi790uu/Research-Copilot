@@ -3,9 +3,10 @@ import { Link } from "react-router-dom";
 
 import { ApiError, useApi } from "../lib/api";
 import { formatRelative, shortId } from "../lib/format";
-import type { Brief } from "../lib/types";
+import type { Brief, ResearchProgress } from "../lib/types";
 import { LoadMore } from "../components/ui/LoadMore";
 import { useNewResearch } from "../components/dashboard/newResearchContext";
+import { useResearchProgress } from "../hooks/useResearchProgress";
 import { Status, statusLabel, statusTone } from "../components/ui/Pill";
 
 /** Briefs paused mid-setup can be reopened in the modal to finish the flow. */
@@ -79,10 +80,52 @@ export default function Researches() {
   );
 }
 
+/** The live one-liner for a running research, derived from its tasks. */
+function progressLine(progress: ResearchProgress | undefined): string {
+  if (!progress) return "Getting started…";
+  const running = progress.tasks.filter((t) => t.status === "running");
+  if (running.length > 0) return running[running.length - 1].title;
+  if (progress.tasks.length > 0) return "Wrapping up the report…";
+  return "Getting started…";
+}
+
+function RunningCard({ brief }: { brief: Brief }) {
+  const progress = useResearchProgress(brief.id, true);
+  return (
+    <li>
+      <div className="block rounded-2xl bg-bg-elev/60 px-5 py-4">
+        <div className="flex items-baseline flex-wrap gap-x-3 gap-y-1">
+          <h3 className="text-[1.05rem] font-medium text-ink leading-tight truncate max-w-full">
+            {brief.company_name}
+          </h3>
+          <Status tone={statusTone(brief.status)} pulse>
+            {statusLabel(brief.status)}
+          </Status>
+        </div>
+        <p className="mt-1 text-sm text-ink-soft line-clamp-1 max-w-prose">
+          {progressLine(progress)}
+        </p>
+        <div className="mt-2.5 flex items-center gap-3 font-mono text-[0.625rem] uppercase tracking-wider text-ink-faint/70">
+          <time dateTime={brief.updated_at}>{formatRelative(brief.updated_at)}</time>
+          <span>{shortId(brief.id, 6)}</span>
+        </div>
+      </div>
+    </li>
+  );
+}
+
 function ResearchCard({ brief, onResume }: { brief: Brief; onResume: (b: Brief) => void }) {
+  if (brief.status === "running") return <RunningCard brief={brief} />;
+
   const resumable = isResumable(brief.status);
-  const resumeLabel =
-    brief.status === "awaiting_clarification" ? "Answer questions" : "Review plan";
+  const completed = brief.status === "completed";
+  const hint = resumable
+    ? brief.status === "awaiting_clarification"
+      ? "Answer questions"
+      : "Review plan"
+    : completed
+      ? "View report"
+      : null;
 
   const body = (
     <>
@@ -90,9 +133,7 @@ function ResearchCard({ brief, onResume }: { brief: Brief; onResume: (b: Brief) 
         <h3 className="text-[1.05rem] font-medium text-ink leading-tight truncate max-w-full">
           {brief.company_name}
         </h3>
-        <Status tone={statusTone(brief.status)} pulse={brief.status === "running"}>
-          {statusLabel(brief.status)}
-        </Status>
+        <Status tone={statusTone(brief.status)}>{statusLabel(brief.status)}</Status>
         {brief.contact_name ? (
           <span className="font-mono text-[0.625rem] uppercase tracking-wider text-ink-faint/70">
             · meeting {brief.contact_name}
@@ -103,19 +144,28 @@ function ResearchCard({ brief, onResume }: { brief: Brief; onResume: (b: Brief) 
       <div className="mt-2.5 flex items-center gap-3 font-mono text-[0.625rem] uppercase tracking-wider text-ink-faint/70">
         <time dateTime={brief.updated_at}>{formatRelative(brief.updated_at)}</time>
         <span>{shortId(brief.id, 6)}</span>
-        {resumable ? <span className="text-accent">{resumeLabel} →</span> : null}
+        {hint ? <span className="text-accent">{hint} →</span> : null}
       </div>
     </>
   );
 
+  const cardClass =
+    "block w-full rounded-2xl bg-bg-elev/60 px-5 py-4 text-left transition-colors hover:bg-bg-elev";
+
+  if (completed) {
+    return (
+      <li>
+        <Link to={`/app/researches/${brief.id}`} className={cardClass}>
+          {body}
+        </Link>
+      </li>
+    );
+  }
+
   if (resumable) {
     return (
       <li>
-        <button
-          type="button"
-          onClick={() => onResume(brief)}
-          className="block w-full rounded-2xl bg-bg-elev/60 px-5 py-4 text-left transition-colors hover:bg-bg-elev"
-        >
+        <button type="button" onClick={() => onResume(brief)} className={cardClass}>
           {body}
         </button>
       </li>

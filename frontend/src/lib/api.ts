@@ -8,13 +8,12 @@ import type {
   BriefCreate,
   BriefPage,
   ChatTurnPayload,
+  CompanyContext,
   CopilotChatDetail,
   CopilotChatRequest,
   CopilotConversationPage,
   ResearchJob,
-  ResearchJobEvent,
-  ResearchTask,
-  ResearcherResult,
+  ResearchProgress,
   User,
 } from "./types";
 
@@ -89,6 +88,9 @@ interface ApiClient {
   me: {
     get: () => Promise<User>;
     activity: () => Promise<ActivitySummary>;
+    updateCompanyContext: (context: CompanyContext) => Promise<User>;
+    /** Scrape a website and return a draft company profile (not saved). */
+    draftCompanyContext: (website: string) => Promise<CompanyContext>;
   };
   briefs: {
     create: (payload: BriefCreate) => Promise<Brief>;
@@ -102,11 +104,12 @@ interface ApiClient {
       signal?: AbortSignal
     ) => Promise<Response>;
     /** Approve the plan, creating + triggering the phase-2 job. Returns the
-     * new job id to start polling. */
+     * new job id. */
     approvePlan: (id: string) => Promise<{ job_id: string }>;
     /** Most-recent job for this brief (404 if none). */
     latestJob: (id: string) => Promise<ResearchJob>;
-    listJobs: (id: string) => Promise<ResearchJob[]>;
+    /** Latest job status + tasks, polled while a research runs. */
+    progress: (id: string) => Promise<ResearchProgress>;
   };
   copilot: {
     /** A page of the user's chat threads, newest first. */
@@ -119,10 +122,6 @@ interface ApiClient {
     send: (payload: CopilotChatRequest, signal?: AbortSignal) => Promise<Response>;
   };
   jobs: {
-    get: (id: string) => Promise<ResearchJob>;
-    events: (id: string) => Promise<ResearchJobEvent[]>;
-    researchers: (id: string) => Promise<ResearcherResult[]>;
-    tasks: (id: string) => Promise<ResearchTask[]>;
     reportPdf: (id: string) => Promise<{ blob: Blob; filename: string }>;
   };
 }
@@ -133,6 +132,16 @@ function buildClient(fetcher: Fetcher, getToken: TokenSource): ApiClient {
     me: {
       get: () => fetcher<User>("/me"),
       activity: () => fetcher<ActivitySummary>("/me/activity"),
+      updateCompanyContext: (context) =>
+        fetcher<User>("/me/company-context", {
+          method: "PUT",
+          body: JSON.stringify(context),
+        }),
+      draftCompanyContext: (website) =>
+        fetcher<CompanyContext>("/me/company-context/draft", {
+          method: "POST",
+          body: JSON.stringify({ website }),
+        }),
     },
     briefs: {
       create: (payload) =>
@@ -169,7 +178,7 @@ function buildClient(fetcher: Fetcher, getToken: TokenSource): ApiClient {
           method: "POST",
         }),
       latestJob: (id) => fetcher<ResearchJob>(`/briefs/${id}/job`),
-      listJobs: (id) => fetcher<ResearchJob[]>(`/briefs/${id}/jobs`),
+      progress: (id) => fetcher<ResearchProgress>(`/briefs/${id}/progress`),
     },
     copilot: {
       chats: (params) => {
@@ -200,10 +209,6 @@ function buildClient(fetcher: Fetcher, getToken: TokenSource): ApiClient {
       },
     },
     jobs: {
-      get: (id) => fetcher<ResearchJob>(`/jobs/${id}`),
-      events: (id) => fetcher<ResearchJobEvent[]>(`/jobs/${id}/events`),
-      researchers: (id) => fetcher<ResearcherResult[]>(`/jobs/${id}/researchers`),
-      tasks: (id) => fetcher<ResearchTask[]>(`/jobs/${id}/tasks`),
       reportPdf: async (id) => {
         const headers: Record<string, string> = { Accept: "application/pdf" };
         if (getToken) {

@@ -61,9 +61,20 @@ export interface BriefPage {
   offset: number;
 }
 
+/** The seller's own company profile, reused across researches to build pitches. */
+export interface CompanyContext {
+  what_you_sell: string;
+  value_props: string;
+  icp: string;
+  differentiators: string;
+  proof_points: string;
+  notes: string;
+}
+
 export interface User {
   id: string;
   email: string | null;
+  company_context: CompanyContext | null;
   created_at: string;
   updated_at: string;
   last_seen_at: string;
@@ -182,8 +193,7 @@ export interface Source {
 
 // ---------------------------------------------------------------------------
 // Dynamically-structured report (mirrors backend `app/domain/report.py`).
-// The writer chooses the sections; `ResearchJob.final_report` carries the
-// JSON-encoded form of this.
+// The writer chooses the sections; `ResearchJob.company_report` carries this.
 // ---------------------------------------------------------------------------
 
 export interface ReportSection {
@@ -193,9 +203,41 @@ export interface ReportSection {
 }
 
 export interface ReportContent {
+  /** Direct answer to the user's objective; the headline payoff. */
+  answer: string;
   summary: string;
   sections: ReportSection[];
   sources: Source[];
+}
+
+/** The named meeting contact. `verified` is false when identity could not be
+ * confidently tied to the target company (a namesake is never attributed). */
+export interface PersonReport {
+  verified: boolean;
+  headline: string;
+  summary: string;
+  sections: ReportSection[];
+  sources: Source[];
+}
+
+export interface PitchTalkingPoint {
+  point: string;
+  rationale: string;
+}
+
+export interface PitchObjection {
+  objection: string;
+  response: string;
+}
+
+/** Sales pitch built from the research + the seller's company context.
+ * Present only when the seller has filled in their company context. */
+export interface Pitch {
+  headline: string;
+  why_now: string;
+  talking_points: PitchTalkingPoint[];
+  opening_message: string;
+  objections: PitchObjection[];
 }
 
 // ---------------------------------------------------------------------------
@@ -228,33 +270,27 @@ export interface ResearchJob {
   user_id: string;
   status: ResearchJobStatus;
   research_plan: string | null;
-  final_report: string | null;
-  sources: Source[];
-  report_pdf_key: string | null;
+  /** Factual company research (carries the summary + sources). */
+  company_report: ReportContent | null;
+  /** Named meeting contact; null when the brief has no contact. */
+  person_report: PersonReport | null;
+  /** Sales pitch; null when the seller has no company context. */
+  pitch: Pitch | null;
   created_at: string;
   updated_at: string;
 }
 
-export interface ResearchJobEvent {
-  event_type: string;
-  data: Record<string, unknown>;
-  created_at: string;
-}
-
-export interface ResearcherResult {
-  topic: string;
-  summary: string;
-  sources: Source[];
-  created_at: string;
-}
-
-export interface ResearchTask {
-  id: string;
+/** One research angle, for the running-card progress line. */
+export interface ProgressTask {
   title: string;
-  description: string;
   status: "running" | "completed" | "failed";
-  created_at: string;
-  updated_at: string;
+}
+
+/** GET /briefs/{id}/progress — latest job status + its tasks (polled while a
+ * research is running). */
+export interface ResearchProgress {
+  status: ResearchJobStatus;
+  tasks: ProgressTask[];
 }
 
 // ---------------------------------------------------------------------------

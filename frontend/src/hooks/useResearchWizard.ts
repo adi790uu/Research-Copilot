@@ -185,5 +185,11 @@ export function useResearchWizard() {
     [api, abort, consume, state.briefId],
   );
 
-  return { ...state, start, submitAnswers, resume, reset };
+  /** Approve the plan and launch the phase-2 job. Returns the job id. */
+  const approve = useCallback(async () => {
+    if (!state.briefId) return null;
+    return api.briefs.approvePlan(state.briefId);
+  }, [api, state.briefId]);
+
+  return { ...state, start, submitAnswers, resume, approve, reset };
 }

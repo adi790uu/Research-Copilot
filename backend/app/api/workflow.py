@@ -125,17 +125,17 @@ async def approve_plan(
     return {"job_id": job_id}
 
 
-@router.get("/jobs")
-async def list_brief_jobs(
+@router.get("/progress")
+async def get_brief_progress(
     brief_id: str,
     db: AsyncSession = Depends(get_db_session),
     user: CurrentUser = Depends(get_current_user),
-) -> list[dict]:
+) -> dict:
+    """Latest job status + tasks for the running-card poll on the Researches tab."""
     owned = await BriefRepository(db, user.id).get(brief_id)
     if owned is None:
         raise NotFoundError(f"Brief {brief_id} not found")
-    job = await job_store.get_job_by_brief(brief_id)
-    return [job] if job else []
+    return await job_store.get_progress_by_brief(brief_id)
 
 
 @router.get("/job")
@@ -165,41 +165,6 @@ async def _job_or_404(job_id: str, user_id: str) -> dict:
     return job
 
 
-@jobs_router.get("/{job_id}")
-async def get_job(
-    job_id: str,
-    user: CurrentUser = Depends(get_current_user),
-) -> dict:
-    return await _job_or_404(job_id, user.id)
-
-
-@jobs_router.get("/{job_id}/events")
-async def get_job_events(
-    job_id: str,
-    user: CurrentUser = Depends(get_current_user),
-) -> list[dict]:
-    await _job_or_404(job_id, user.id)
-    return await job_store.get_job_events(job_id)
-
-
-@jobs_router.get("/{job_id}/researchers")
-async def get_job_researchers(
-    job_id: str,
-    user: CurrentUser = Depends(get_current_user),
-) -> list[dict]:
-    await _job_or_404(job_id, user.id)
-    return await job_store.get_job_researchers(job_id)
-
-
-@jobs_router.get("/{job_id}/tasks")
-async def get_job_tasks(
-    job_id: str,
-    user: CurrentUser = Depends(get_current_user),
-) -> list[dict]:
-    await _job_or_404(job_id, user.id)
-    return await job_store.get_job_tasks(job_id)
-
-
 @jobs_router.get("/{job_id}/report.pdf")
 async def get_job_report_pdf(
     job_id: str,
@@ -207,9 +172,9 @@ async def get_job_report_pdf(
     user: CurrentUser = Depends(get_current_user),
 ) -> Response:
     job = await _job_or_404(job_id, user.id)
-    raw_report = job.get("final_report")
+    raw_report = job.get("company_report")
     if not raw_report:
-        raise NotFoundError(f"Job {job_id} has no final report yet")
+        raise NotFoundError(f"Job {job_id} has no company report yet")
 
     try:
         content_dict = raw_report if isinstance(raw_report, dict) else _json.loads(raw_report)

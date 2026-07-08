@@ -3,12 +3,11 @@ import { eq, sql } from "drizzle-orm";
 import { db } from "@/db/client";
 import {
   briefs,
+  type CompanyContext,
   type ContactResolution,
-  researchJobEvents,
-  researchJobResearchers,
   researchJobs,
   researchTasks,
-  type Source,
+  users,
 } from "@/db/schema";
 
 export type BriefContext = {
@@ -19,6 +18,8 @@ export type BriefContext = {
   contactName: string | null;
   contactEmail: string | null;
   contactResolution: ContactResolution | null;
+  // The brief owner's own company profile, used to build the pitch.
+  companyContext: CompanyContext | null;
 };
 
 export async function getBrief(briefId: string): Promise<BriefContext | null> {
@@ -31,8 +32,10 @@ export async function getBrief(briefId: string): Promise<BriefContext | null> {
       contactName: briefs.contactName,
       contactEmail: briefs.contactEmail,
       contactResolution: briefs.contactResolution,
+      companyContext: users.companyContext,
     })
     .from(briefs)
+    .leftJoin(users, eq(users.id, briefs.userId))
     .where(eq(briefs.id, briefId))
     .limit(1);
   return row ?? null;
@@ -45,36 +48,30 @@ export async function updateJobStatus(jobId: string, status: string): Promise<vo
     .where(eq(researchJobs.id, jobId));
 }
 
+// Keep the brief's status in step with its latest job so the Researches list
+// reflects completion/failure without loading the job.
+export async function updateBriefStatus(briefId: string, status: string): Promise<void> {
+  await db.update(briefs).set({ status }).where(eq(briefs.id, briefId));
+}
+
 export async function updateJobResult(
   jobId: string,
-  finalReport: string,
-  sources: Source[],
+  artifacts: {
+    companyReport: string;
+    personReport: string | null;
+    pitch: string | null;
+  },
 ): Promise<void> {
   await db
     .update(researchJobs)
-    .set({ status: "completed", finalReport, sources, updatedAt: sql`now()` })
+    .set({
+      status: "completed",
+      companyReport: artifacts.companyReport,
+      personReport: artifacts.personReport,
+      pitch: artifacts.pitch,
+      updatedAt: sql`now()`,
+    })
     .where(eq(researchJobs.id, jobId));
-}
-
-export async function appendJobEvent(
-  jobId: string,
-  eventType: string,
-  data: Record<string, unknown> = {},
-): Promise<void> {
-  await db
-    .insert(researchJobEvents)
-    .values({ jobId, eventType, data, createdAt: sql`now()` });
-}
-
-export async function appendResearcherResult(
-  jobId: string,
-  topic: string,
-  summary: string,
-  sources: Source[],
-): Promise<void> {
-  await db
-    .insert(researchJobResearchers)
-    .values({ jobId, topic, summary, sources, createdAt: sql`now()` });
 }
 
 export async function createTask(jobId: string, researchTopic: string): Promise<string> {

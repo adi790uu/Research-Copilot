@@ -1,7 +1,7 @@
 import type { BaseMessage } from "@langchain/core/messages";
 import { Annotation, messagesStateReducer } from "@langchain/langgraph";
-import type { Source } from "@/db/schema";
-import type { ReportContent } from "@/graph/report-schema";
+import type { CompanyContext, Source } from "@/db/schema";
+import type { PersonReport, Pitch, ReportContent } from "@/graph/report-schema";
 
 type Override<T> = { type: "override"; value: T[] };
 
@@ -70,9 +70,20 @@ export const Graph2Annotation = Annotation.Root({
   personName: Annotation<string>(lastValueString),
   personLinkedinUrl: Annotation<string>(lastValueString),
   personTitle: Annotation<string>(lastValueString),
-  notes: notesChannel,
-  rawNotes: notesChannel,
-  sources: sourcesChannel,
-  report: Annotation<ReportContent | null>({ reducer: (_, u) => u, default: () => null }),
+  // Seller's own profile; drives whether a pitch is produced.
+  companyContext: Annotation<CompanyContext | null>({ reducer: (_, u) => u, default: () => null }),
+
+  // Company research (factual) — its own notes/sources so it stays separate
+  // from the person research running in parallel.
+  companyNotes: notesChannel,
+  companySources: sourcesChannel,
+  // Person research on the named meeting contact.
+  personNotes: notesChannel,
+  personSources: sourcesChannel,
+
+  // Artifacts.
+  companyReport: Annotation<ReportContent | null>({ reducer: (_, u) => u, default: () => null }),
+  personReport: Annotation<PersonReport | null>({ reducer: (_, u) => u, default: () => null }),
+  pitch: Annotation<Pitch | null>({ reducer: (_, u) => u, default: () => null }),
 });
 export type Graph2State = typeof Graph2Annotation.State;

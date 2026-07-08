@@ -1,7 +1,7 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, BigInteger, DateTime, ForeignKey, String, Text
+from sqlalchemy import JSON, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -23,6 +23,8 @@ class UserORM(Base):
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=_uuid)
     email: Mapped[str] = mapped_column(String(320), nullable=False, unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    # The seller's own company profile, reused across researches to build pitches.
+    company_context: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow
     )
@@ -146,9 +148,12 @@ class ResearchJobORM(Base):
     )
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
     research_plan: Mapped[str | None] = mapped_column(Text, nullable=True)
-    final_report: Mapped[str | None] = mapped_column(Text, nullable=True)
-    sources: Mapped[list | None] = mapped_column(JSON, nullable=True)
-    report_pdf_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # Factual company research (carries the summary + sources).
+    company_report: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Named meeting contact (null when there's no contact).
+    person_report: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Sales pitch (null when the seller has no company context).
+    pitch: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow
     )
@@ -157,60 +162,11 @@ class ResearchJobORM(Base):
     )
 
     brief: Mapped[BriefORM] = relationship(back_populates="jobs")
-    events: Mapped[list["ResearchJobEventORM"]] = relationship(
-        back_populates="job",
-        cascade="all, delete-orphan",
-        order_by="ResearchJobEventORM.id",
-    )
-    researchers: Mapped[list["ResearchJobResearcherORM"]] = relationship(
-        back_populates="job",
-        cascade="all, delete-orphan",
-        order_by="ResearchJobResearcherORM.id",
-    )
     tasks: Mapped[list["ResearchTaskORM"]] = relationship(
         back_populates="job",
         cascade="all, delete-orphan",
         order_by="ResearchTaskORM.created_at",
     )
-
-
-class ResearchJobEventORM(Base):
-    __tablename__ = "research_job_events"
-
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    job_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey("research_jobs.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
-    data: Mapped[dict] = mapped_column(JSON, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=_utcnow
-    )
-
-    job: Mapped[ResearchJobORM] = relationship(back_populates="events")
-
-
-class ResearchJobResearcherORM(Base):
-    __tablename__ = "research_job_researchers"
-
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    job_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey("research_jobs.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    topic: Mapped[str] = mapped_column(Text, nullable=False)
-    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
-    sources: Mapped[list | None] = mapped_column(JSON, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=_utcnow
-    )
-
-    job: Mapped[ResearchJobORM] = relationship(back_populates="researchers")
 
 
 class HubspotDealSyncORM(Base):
