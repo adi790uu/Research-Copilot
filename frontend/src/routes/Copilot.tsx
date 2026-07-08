@@ -1,52 +1,103 @@
-import { SessionForm } from "../components/session/SessionForm";
-import { useAuth } from "../lib/auth";
+import { useCallback, useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 
-/**
- * The default landing page after sign-in. Deliberately spare — a centered
- * greeting and a single composer, closer to a chat app's empty state than
- * the old magazine-style dashboard. Past research lives in the Researches
- * tab now, not here.
- */
+import { ChatThread } from "../components/copilot/ChatThread";
+import { Composer } from "../components/copilot/Composer";
+import { useCopilotChat } from "../hooks/useCopilotChat";
+import { useApi } from "../lib/api";
+import { useAuth } from "../lib/auth";
+import type { Brief } from "../lib/types";
+
 export default function Copilot() {
+  const api = useApi();
   const { session } = useAuth();
   const firstName = session?.user.email.split("@")[0] ?? null;
 
-  return (
-    <div className="flex h-full min-h-0 items-center justify-center overflow-y-auto px-6">
-      <div className="w-full max-w-2xl py-16 stagger">
-        <h1
-          className="text-center font-display text-[2.25rem] leading-[1.1] text-ink md:text-[2.75rem]"
-          style={{ fontVariationSettings: '"opsz" 144, "SOFT" 60' }}
-        >
-          {firstName ? (
-            <>
-              What should we{" "}
-              <em
-                className="italic text-accent"
-                style={{ fontVariationSettings: '"opsz" 144, "SOFT" 100, "WONK" 1' }}
-              >
-                research
-              </em>
-              , {firstName}?
-            </>
-          ) : (
-            <>
-              What should we{" "}
-              <em
-                className="italic text-accent"
-                style={{ fontVariationSettings: '"opsz" 144, "SOFT" 100, "WONK" 1' }}
-              >
-                research
-              </em>{" "}
-              today?
-            </>
-          )}
-        </h1>
+  const [params, setParams] = useSearchParams();
+  const conversationId = params.get("c");
+  const setActive = useCallback(
+    (id: string | null) => setParams(id ? { c: id } : {}, { replace: true }),
+    [setParams],
+  );
 
-        <section className="mt-10">
-          <SessionForm />
-        </section>
-      </div>
+  const researchQuery = useQuery({
+    queryKey: ["briefs", { limit: 50, offset: 0 }],
+    queryFn: () => api.briefs.list({ limit: 50, offset: 0 }),
+  });
+  const researches = useMemo<Brief[]>(
+    () => researchQuery.data?.items ?? [],
+    [researchQuery.data],
+  );
+
+  const titleFor = useCallback(
+    (briefId: string) =>
+      researches.find((b) => b.id === briefId)?.company_name ?? "a research",
+    [researches],
+  );
+
+  const chat = useCopilotChat(titleFor, { conversationId, onActiveChange: setActive });
+
+  return (
+    <section className="flex h-full min-h-0 flex-col">
+      <ChatHeader
+        title={chat.messages.length > 0 ? chat.activeTitle : "New chat"}
+        canReset={chat.activeId !== null || chat.messages.length > 0}
+        onNew={() => setActive(null)}
+      />
+      <ChatThread
+        messages={chat.messages}
+        loading={chat.loading}
+        firstName={firstName}
+        selectedCount={chat.selectedBriefIds.length}
+        onResolveProposal={chat.resolveProposal}
+      />
+      <Composer
+        disabled={chat.sending}
+        researches={researches}
+        researchesLoading={researchQuery.isLoading}
+        selectedIds={chat.selectedBriefIds}
+        onToggleResearch={chat.toggleResearch}
+        onSend={chat.send}
+      />
+    </section>
+  );
+}
+
+function ChatHeader({
+  title,
+  canReset,
+  onNew,
+}: {
+  title: string;
+  canReset: boolean;
+  onNew: () => void;
+}) {
+  return (
+    <div className="flex h-12 shrink-0 items-center justify-between gap-3 px-6 hairline-b">
+      <p className="truncate text-sm text-ink-soft">{title}</p>
+      {canReset ? (
+        <button
+          type="button"
+          onClick={onNew}
+          className="group inline-flex shrink-0 items-center gap-1.5 text-ink-faint transition-colors hover:text-ink"
+          title="New chat"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            width={13}
+            height={13}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={1.75}
+            strokeLinecap="round"
+            aria-hidden
+          >
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+          <span className="font-mono text-[0.625rem] uppercase tracking-eyebrow">New chat</span>
+        </button>
+      ) : null}
     </div>
   );
 }

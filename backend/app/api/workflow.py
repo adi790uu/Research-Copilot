@@ -7,9 +7,9 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import CurrentUser, get_current_user
@@ -19,7 +19,7 @@ from app.domain.events import WorkflowEvent
 from app.domain.report import Report, ReportContent
 from app.persistence.db import get_db_session
 from app.persistence.repositories import BriefRepository
-from app.services import job_store, report_chat
+from app.services import job_store
 from app.services.pdf_export import PDFRenderError, report_to_pdf
 from app.services.workflow_service import WorkflowService
 
@@ -39,7 +39,7 @@ def _service(request: Request) -> WorkflowService:
 router = APIRouter(prefix="/briefs/{brief_id}", tags=["workflow"])
 
 
-ChatTurnKind = Literal["start", "answer", "subscribe"]
+ChatTurnKind = Literal["start", "answer"]
 
 
 class ClarificationAnswer(BaseModel):
@@ -70,7 +70,7 @@ async def chat(
         raise AppError("'answer' requires a non-empty message")
 
     svc = _service(request)
-    message = None if payload.kind == "subscribe" else payload.message
+    message = payload.message
     answers = (
         [a.model_dump() for a in payload.clarification_answers]
         if payload.clarification_answers
@@ -125,17 +125,17 @@ async def approve_plan(
     return {"job_id": job_id}
 
 
-@router.get("/jobs")
-async def list_brief_jobs(
+@router.get("/progress")
+async def get_brief_progress(
     brief_id: str,
     db: AsyncSession = Depends(get_db_session),
     user: CurrentUser = Depends(get_current_user),
-) -> list[dict]:
+) -> dict:
+    """Latest job status + tasks for the running-card poll on the Researches tab."""
     owned = await BriefRepository(db, user.id).get(brief_id)
     if owned is None:
         raise NotFoundError(f"Brief {brief_id} not found")
-    job = await job_store.get_job_by_brief(brief_id)
-    return [job] if job else []
+    return await job_store.get_progress_by_brief(brief_id)
 
 
 @router.get("/job")
@@ -153,60 +153,6 @@ async def get_latest_job(
     return job
 
 
-class FollowupMessage(BaseModel):
-    content: str = Field(min_length=1, max_length=4000)
-
-
-@router.get("/messages")
-async def list_brief_messages(
-    brief_id: str,
-    kind: Literal["workflow", "followup"] | None = Query(default=None),
-    db: AsyncSession = Depends(get_db_session),
-    user: CurrentUser = Depends(get_current_user),
-) -> list[dict]:
-    return await report_chat.list_messages(db, brief_id=brief_id, user_id=user.id, kind=kind)
-
-
-@router.post("/messages")
-async def post_brief_message(
-    brief_id: str,
-    payload: FollowupMessage,
-    request: Request,
-    db: AsyncSession = Depends(get_db_session),
-    user: CurrentUser = Depends(get_current_user),
-) -> StreamingResponse:
-
-    async def generator() -> AsyncIterator[bytes]:
-        try:
-            async for chunk in report_chat.stream_followup(
-                db,
-                brief_id=brief_id,
-                user_id=user.id,
-                question=payload.content,
-            ):
-                if await request.is_disconnected():
-                    return
-                yield f"event: token\ndata: {_sse_escape(chunk)}\n\n".encode()
-            yield b"event: done\ndata: {}\n\n"
-        except Exception as exc:  # noqa: BLE001
-            msg = str(exc).replace("\n", " ")
-            yield f"event: error\ndata: {msg}\n\n".encode()
-
-    return StreamingResponse(
-        generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-            "Connection": "keep-alive",
-        },
-    )
-
-
-def _sse_escape(text: str) -> str:
-    return text.replace("\r\n", "\n").replace("\n", "\ndata: ")
-
-
 jobs_router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 
@@ -219,41 +165,6 @@ async def _job_or_404(job_id: str, user_id: str) -> dict:
     return job
 
 
-@jobs_router.get("/{job_id}")
-async def get_job(
-    job_id: str,
-    user: CurrentUser = Depends(get_current_user),
-) -> dict:
-    return await _job_or_404(job_id, user.id)
-
-
-@jobs_router.get("/{job_id}/events")
-async def get_job_events(
-    job_id: str,
-    user: CurrentUser = Depends(get_current_user),
-) -> list[dict]:
-    await _job_or_404(job_id, user.id)
-    return await job_store.get_job_events(job_id)
-
-
-@jobs_router.get("/{job_id}/researchers")
-async def get_job_researchers(
-    job_id: str,
-    user: CurrentUser = Depends(get_current_user),
-) -> list[dict]:
-    await _job_or_404(job_id, user.id)
-    return await job_store.get_job_researchers(job_id)
-
-
-@jobs_router.get("/{job_id}/tasks")
-async def get_job_tasks(
-    job_id: str,
-    user: CurrentUser = Depends(get_current_user),
-) -> list[dict]:
-    await _job_or_404(job_id, user.id)
-    return await job_store.get_job_tasks(job_id)
-
-
 @jobs_router.get("/{job_id}/report.pdf")
 async def get_job_report_pdf(
     job_id: str,
@@ -261,9 +172,9 @@ async def get_job_report_pdf(
     user: CurrentUser = Depends(get_current_user),
 ) -> Response:
     job = await _job_or_404(job_id, user.id)
-    raw_report = job.get("final_report")
+    raw_report = job.get("company_report")
     if not raw_report:
-        raise NotFoundError(f"Job {job_id} has no final report yet")
+        raise NotFoundError(f"Job {job_id} has no company report yet")
 
     try:
         content_dict = raw_report if isinstance(raw_report, dict) else _json.loads(raw_report)

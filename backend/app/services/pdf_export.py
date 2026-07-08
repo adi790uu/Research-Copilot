@@ -55,6 +55,8 @@ def render_report_html(
     body_parts: list[str] = [
         _cover_html(company_name, objective, report.created_at, len(sources), len(sections)),
     ]
+    if report.content.answer.strip():
+        body_parts.append(_answer_html(report.content.answer, src_index))
     if report.content.summary.strip():
         body_parts.append(_summary_html(report.content.summary, src_index))
     for i, section in enumerate(sections, start=1):
@@ -108,6 +110,15 @@ def _cover_html(
     &nbsp;·&nbsp; {section_count} sections
     &nbsp;·&nbsp; {source_count} sources
   </p>
+</section>
+"""
+
+
+def _answer_html(answer: str, src_index: dict[str, int]) -> str:
+    return f"""
+<section class="rsec">
+  <h2><span class="ord">00</span><span class="t">The answer</span></h2>
+  <div class="callout">{_render_paragraphs(answer.strip(), src_index)}</div>
 </section>
 """
 

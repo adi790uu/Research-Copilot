@@ -22,6 +22,8 @@ class ReportSection(BaseModel):
 
 
 class ReportContent(BaseModel):
+    # Direct answer to the user's objective; the headline payoff of the brief.
+    answer: str = ""
     summary: str = ""
     sections: list[ReportSection] = Field(default_factory=list)
     sources: list[Source] = Field(default_factory=list)

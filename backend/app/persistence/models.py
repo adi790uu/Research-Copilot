@@ -1,7 +1,7 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, BigInteger, DateTime, ForeignKey, String, Text
+from sqlalchemy import JSON, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -23,6 +23,8 @@ class UserORM(Base):
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=_uuid)
     email: Mapped[str] = mapped_column(String(320), nullable=False, unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    # The seller's own company profile, reused across researches to build pitches.
+    company_context: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow
     )
@@ -56,6 +58,9 @@ class BriefORM(Base):
     title: Mapped[str] = mapped_column(String(200), nullable=False, default="New research")
     status: Mapped[str] = mapped_column(String(40), nullable=False, default="pending")
     clarification_question: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # The generated research plan, persisted once it's ready so the brief can be
+    # reopened at the approval step without re-reading the LangGraph checkpoint.
+    research_plan: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     contact_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     contact_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
     contact_resolution: Mapped[dict | None] = mapped_column(JSON, nullable=True)
@@ -73,8 +78,33 @@ class BriefORM(Base):
         order_by="ResearchJobORM.created_at.desc()",
         lazy="selectin",
     )
+
+
+class ChatORM(Base):
+    """A Copilot conversation. Scoped to a user. The set of researches to ground
+    on is supplied by the client with each message (not persisted), so the chat
+    only owns its message history. The client generates the id so a fresh thread
+    can start streaming before its first turn is persisted."""
+
+    __tablename__ = "chats"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    title: Mapped[str] = mapped_column(String(200), nullable=False, default="New chat")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow, onupdate=_utcnow
+    )
+
     messages: Mapped[list["MessageORM"]] = relationship(
-        back_populates="brief",
+        back_populates="chat",
         cascade="all, delete-orphan",
         order_by="MessageORM.created_at",
         lazy="selectin",
@@ -85,22 +115,19 @@ class MessageORM(Base):
     __tablename__ = "messages"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    brief_id: Mapped[str] = mapped_column(
-        String(32),
-        ForeignKey("briefs.id", ondelete="CASCADE"),
+    chat_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("chats.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     role: Mapped[str] = mapped_column(String(16), nullable=False)
-    kind: Mapped[str] = mapped_column(
-        String(16), nullable=False, server_default="followup", index=True
-    )
     content: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow
     )
 
-    brief: Mapped[BriefORM] = relationship(back_populates="messages")
+    chat: Mapped[ChatORM] = relationship(back_populates="messages")
 
 
 class ResearchJobORM(Base):
@@ -121,9 +148,12 @@ class ResearchJobORM(Base):
     )
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
     research_plan: Mapped[str | None] = mapped_column(Text, nullable=True)
-    final_report: Mapped[str | None] = mapped_column(Text, nullable=True)
-    sources: Mapped[list | None] = mapped_column(JSON, nullable=True)
-    report_pdf_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # Factual company research (carries the summary + sources).
+    company_report: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Named meeting contact (null when there's no contact).
+    person_report: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Sales pitch (null when the seller has no company context).
+    pitch: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow
     )
@@ -132,60 +162,11 @@ class ResearchJobORM(Base):
     )
 
     brief: Mapped[BriefORM] = relationship(back_populates="jobs")
-    events: Mapped[list["ResearchJobEventORM"]] = relationship(
-        back_populates="job",
-        cascade="all, delete-orphan",
-        order_by="ResearchJobEventORM.id",
-    )
-    researchers: Mapped[list["ResearchJobResearcherORM"]] = relationship(
-        back_populates="job",
-        cascade="all, delete-orphan",
-        order_by="ResearchJobResearcherORM.id",
-    )
     tasks: Mapped[list["ResearchTaskORM"]] = relationship(
         back_populates="job",
         cascade="all, delete-orphan",
         order_by="ResearchTaskORM.created_at",
     )
-
-
-class ResearchJobEventORM(Base):
-    __tablename__ = "research_job_events"
-
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    job_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey("research_jobs.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
-    data: Mapped[dict] = mapped_column(JSON, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=_utcnow
-    )
-
-    job: Mapped[ResearchJobORM] = relationship(back_populates="events")
-
-
-class ResearchJobResearcherORM(Base):
-    __tablename__ = "research_job_researchers"
-
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    job_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey("research_jobs.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    topic: Mapped[str] = mapped_column(Text, nullable=False)
-    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
-    sources: Mapped[list | None] = mapped_column(JSON, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=_utcnow
-    )
-
-    job: Mapped[ResearchJobORM] = relationship(back_populates="researchers")
 
 
 class HubspotDealSyncORM(Base):

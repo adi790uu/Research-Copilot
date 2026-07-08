@@ -9,6 +9,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.persistence.models import (
     BriefORM,
+    ChatORM,
     HubspotDealSyncORM,
     MessageORM,
     ResearchJobORM,
@@ -41,6 +42,14 @@ class UserRepository:
             return
         row.last_seen_at = datetime.now(UTC)
         await self._db.flush()
+
+    async def set_company_context(self, user_id: str, context: dict) -> UserORM | None:
+        row = await self.get(user_id)
+        if row is None:
+            return None
+        row.company_context = context
+        await self._db.flush()
+        return row
 
     async def counts(self, user_id: str) -> tuple[int, int]:
         briefs = await self._db.scalar(
@@ -113,6 +122,20 @@ class BriefRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_many(self, brief_ids: list[str]) -> list[BriefORM]:
+        """Fetch several owned briefs in one query, returned in the caller's order.
+        Ids that don't exist or aren't owned by this user are silently dropped."""
+        if not brief_ids:
+            return []
+        result = await self._db.execute(
+            select(BriefORM).where(
+                BriefORM.id.in_(brief_ids),
+                BriefORM.user_id == self._user_id,
+            )
+        )
+        by_id = {row.id: row for row in result.scalars().all()}
+        return [by_id[bid] for bid in brief_ids if bid in by_id]
+
     async def list(self, *, limit: int = 50, offset: int = 0) -> tuple[Sequence[BriefORM], int]:
         total = await self._db.scalar(
             select(func.count()).select_from(BriefORM).where(BriefORM.user_id == self._user_id)
@@ -144,6 +167,14 @@ class BriefRepository:
         if row.clarification_question and row.clarification_question.get("answered"):
             return row
         row.clarification_question = {"answered": False, "questions": questions}
+        await self._db.flush()
+        return row
+
+    async def set_research_plan(self, brief_id: str, plan: dict) -> BriefORM | None:
+        row = await self.get(brief_id)
+        if row is None:
+            return None
+        row.research_plan = plan
         await self._db.flush()
         return row
 
@@ -217,20 +248,75 @@ class HubspotDealSyncRepository:
 
 
 class MessageRepository:
-    def __init__(self, db: AsyncSession, brief_id: str) -> None:
-        self._db = db
-        self._brief_id = brief_id
+    """Messages scoped to one Copilot chat."""
 
-    async def list(self, *, kind: str | None = None) -> Sequence[MessageORM]:
-        stmt = select(MessageORM).where(MessageORM.brief_id == self._brief_id)
-        if kind is not None:
-            stmt = stmt.where(MessageORM.kind == kind)
-        result = await self._db.execute(stmt.order_by(MessageORM.created_at))
+    def __init__(self, db: AsyncSession, chat_id: str) -> None:
+        self._db = db
+        self._chat_id = chat_id
+
+    async def list(self) -> Sequence[MessageORM]:
+        result = await self._db.execute(
+            select(MessageORM)
+            .where(MessageORM.chat_id == self._chat_id)
+            .order_by(MessageORM.created_at)
+        )
         return result.scalars().all()
 
-    async def add(self, *, role: str, content: str, kind: str) -> MessageORM:
-        row = MessageORM(brief_id=self._brief_id, role=role, content=content, kind=kind)
+    async def add(self, *, role: str, content: str) -> MessageORM:
+        row = MessageORM(chat_id=self._chat_id, role=role, content=content)
         self._db.add(row)
         await self._db.flush()
         await self._db.refresh(row)
         return row
+
+
+class ChatRepository:
+    """Copilot conversations, scoped to a user."""
+
+    def __init__(self, db: AsyncSession, user_id: str) -> None:
+        self._db = db
+        self._user_id = user_id
+
+    async def get(self, chat_id: str) -> ChatORM | None:
+        result = await self._db.execute(
+            select(ChatORM).where(
+                ChatORM.id == chat_id,
+                ChatORM.user_id == self._user_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def list(self, *, limit: int = 20, offset: int = 0) -> tuple[Sequence[ChatORM], int]:
+        total = await self._db.scalar(
+            select(func.count()).select_from(ChatORM).where(ChatORM.user_id == self._user_id)
+        )
+        result = await self._db.execute(
+            select(ChatORM)
+            .where(ChatORM.user_id == self._user_id)
+            .order_by(ChatORM.updated_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        return result.scalars().all(), int(total or 0)
+
+    async def create(self, chat_id: str, *, title: str = "New chat") -> ChatORM:
+        row = ChatORM(id=chat_id, user_id=self._user_id, title=title)
+        self._db.add(row)
+        await self._db.flush()
+        await self._db.refresh(row)
+        return row
+
+    async def touch(self, chat_id: str) -> None:
+        chat = await self.get(chat_id)
+        if chat is None:
+            return
+        chat.updated_at = datetime.now(UTC)
+        await self._db.flush()
+
+    async def delete(self, chat_id: str) -> bool:
+        chat = await self.get(chat_id)
+        if chat is None:
+            return False
+        await self._db.delete(chat)
+        await self._db.flush()
+        return True

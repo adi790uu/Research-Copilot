@@ -2,7 +2,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import CurrentUser, UnauthorizedError
 from app.domain.brief import Brief
-from app.domain.user import ActivitySummary, User
+from app.domain.user import ActivitySummary, CompanyContext, User
 from app.persistence.repositories import UserRepository
 
 
@@ -16,6 +16,17 @@ class UserService:
         if row is None:
             raise UnauthorizedError("User no longer exists")
         await self._repo.touch_last_seen(current_user.id)
+        await self._db.commit()
+        return User.model_validate(row)
+
+    async def update_company_context(
+        self, current_user: CurrentUser, context: CompanyContext
+    ) -> User:
+        row = await self._repo.set_company_context(
+            current_user.id, context.model_dump()
+        )
+        if row is None:
+            raise UnauthorizedError("User no longer exists")
         await self._db.commit()
         return User.model_validate(row)
 

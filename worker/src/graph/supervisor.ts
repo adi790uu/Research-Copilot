@@ -7,7 +7,7 @@ import {
   StateGraph,
 } from "@langchain/langgraph";
 import { LIMITS } from "@/config";
-import { appendResearcherResult, completeTask, createTask, failTask } from "@/db/jobs";
+import { completeTask, createTask, failTask } from "@/db/jobs";
 import { researcherGraph } from "@/graph/researcher";
 import { conductResearch, researchComplete } from "@/graph/schemas";
 import { SupervisorAnnotation, type SupervisorState } from "@/graph/state";
@@ -83,10 +83,7 @@ async function supervisorToolsNode(
           },
           config,
         );
-        if (jobId) {
-          await appendResearcherResult(jobId, args.research_topic, res.compressedResearch, res.sources);
-          if (taskId) await completeTask(taskId);
-        }
+        if (taskId) await completeTask(taskId);
         return { tc, summary: res.compressedResearch, rawNotes: res.rawNotes, sources: res.sources };
       } catch (err) {
         if (taskId) await failTask(taskId);

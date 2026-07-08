@@ -13,6 +13,8 @@ class Settings(BaseSettings):
 
     openai_api_key: str = Field(default="")
     openai_model: str = Field(default="gpt-4o-mini")
+    # Small/cheap model for lightweight tasks like chat-title generation.
+    openai_title_model: str = Field(default="gpt-5-nano")
     openai_base_url: str = Field(default="")
 
     jwt_secret: str = Field(default="dev-only-change-me")
