@@ -35,20 +35,20 @@ function Hero() {
             fontSize: "clamp(3rem, 8vw, 6rem)",
           }}
         >
-          Your sellers run the conversation.{" "}
+          Walk into every meeting{" "}
           <em
             className="italic text-accent"
             style={{ fontVariationSettings: '"opsz" 144, "SOFT" 100, "WONK" 1' }}
           >
-            We do everything else.
+            already ahead.
           </em>
         </h1>
 
         <p className="mt-8 text-lg md:text-xl text-ink-soft leading-relaxed max-w-prose">
-          Name a company and why you care. Pith researches the business and
-          hands you a structured, fully-cited briefing: the overview, the
-          signals, the risks, the questions worth asking. Then it stays on as a
-          chat that knows it cold.
+          Name the company and why the meeting matters. Pith researches the
+          business, verifies your contact, and writes the pitch to bring, all
+          cited. Then it answers your follow-ups in a chat that knows the account
+          cold.
         </p>
 
         <div className="mt-12 flex flex-wrap items-center gap-4">
@@ -80,9 +80,9 @@ function Hero() {
         <div className="divider-x" />
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-8 sm:gap-0 py-8">
           {[
-            ["Eight sections", "every brief, the same shape"],
-            ["Every claim cited", "no invented facts"],
-            ["Minutes, not hours", "while you do the selling"],
+            ["Cited, not guessed", "every claim traces to a source"],
+            ["The right person", "contact research, identity-checked"],
+            ["Research to pitch", "tailored to what you sell"],
           ].map(([big, small]) => (
             <div key={big} className="sm:px-8 sm:first:pl-0">
               <p className="flex items-center gap-2.5">
@@ -105,15 +105,11 @@ function Hero() {
 
 // ─── Specimen: what you actually get ────────────────────────────────────────
 
-const SECTIONS = [
-  "Company overview",
-  "Products & services",
-  "Target customers",
-  "Business signals",
-  "Risks & challenges",
-  "Discovery questions",
-  "Outreach strategy",
-  "Unknowns",
+const DELIVERABLES: Array<[string, string]> = [
+  ["The answer", "your objective, addressed up front"],
+  ["Company research", "market, signals and risks, every line cited"],
+  ["Meeting contact", "the person you're meeting, identity-verified"],
+  ["The pitch", "your angle, talking points and opener"],
 ];
 
 function Specimen() {
@@ -127,7 +123,7 @@ function Specimen() {
               className="mt-5 font-display text-display-lg text-ink"
               style={{ fontVariationSettings: '"opsz" 144, "SOFT" 60' }}
             >
-              A brief you'd be proud to{" "}
+              A dossier you'd be proud to{" "}
               <em
                 className="italic text-accent"
                 style={{ fontVariationSettings: '"opsz" 144, "SOFT" 100, "WONK" 1' }}
@@ -136,13 +132,13 @@ function Specimen() {
               </em>
             </h2>
             <p className="mt-5 text-ink-soft leading-relaxed max-w-prose">
-              Not a wall of links. A finished document with a consistent shape,
-              so you always know where to look, and every line traces back to a
-              source you can hand-check.
+              Not a wall of links. Your objective answered up front, the company
+              researched and fully cited, the person you're meeting verified, and
+              a pitch built around what you sell. Each a click away.
             </p>
             <p className="mt-6 inline-flex items-center gap-2 font-mono text-[0.6875rem] uppercase tracking-eyebrow text-ink-faint">
               <span className="h-1 w-1 rounded-full bg-accent" />
-              Plus a chat grounded in the brief
+              Plus a chat grounded in every account
             </p>
           </Reveal>
 
@@ -155,28 +151,30 @@ function Specimen() {
               {/* accent spine */}
               <div className="absolute inset-y-0 left-0 w-px bg-gradient-to-b from-transparent via-accent/60 to-transparent" />
               <header className="flex items-baseline justify-between gap-4 px-7 pt-6 pb-5 hairline-b">
-                <p className="eyebrow !tracking-[0.18em]">Research brief</p>
+                <p className="eyebrow !tracking-[0.18em]">Research dossier</p>
                 <p className="font-mono text-[0.625rem] uppercase tracking-eyebrow text-ink-faint">
                   Acme Inc · cited
                 </p>
               </header>
               <ol className="px-7 py-4">
-                {SECTIONS.map((s, i) => (
+                {DELIVERABLES.map(([label, note], i) => (
                   <li
-                    key={s}
-                    className="group flex items-baseline gap-4 py-2.5 border-b border-rule/[0.06] last:border-0"
+                    key={label}
+                    className="flex items-baseline gap-4 py-3 border-b border-rule/[0.06] last:border-0"
                   >
                     <span className="w-6 shrink-0 font-mono text-[0.6875rem] text-accent/80 tabular-nums">
                       {String(i + 1).padStart(2, "0")}
                     </span>
-                    <span
-                      className="flex-1 font-display text-[1.05rem] text-ink leading-snug"
-                      style={{ fontVariationSettings: '"opsz" 36, "SOFT" 40' }}
-                    >
-                      {s}
-                    </span>
-                    <span className="font-mono text-[0.625rem] uppercase tracking-eyebrow text-ink-faint opacity-0 group-hover:opacity-100 transition-opacity">
-                      §{i + 1}
+                    <span className="min-w-0 flex-1">
+                      <span
+                        className="block font-display text-[1.05rem] text-ink leading-snug"
+                        style={{ fontVariationSettings: '"opsz" 36, "SOFT" 40' }}
+                      >
+                        {label}
+                      </span>
+                      <span className="mt-0.5 block text-[0.8125rem] text-ink-faint leading-snug">
+                        {note}
+                      </span>
                     </span>
                   </li>
                 ))}
@@ -195,22 +193,22 @@ const STEPS = [
   {
     n: "01",
     label: "Plan",
-    body: "Turns your objective into the handful of questions actually worth answering, not a generic checklist.",
+    body: "You give the company and why the meeting matters. It asks a couple of sharp clarifying questions, then shows a research plan for you to approve.",
   },
   {
     n: "02",
     label: "Research",
-    body: "Fans out across the public web in parallel, reading sources and keeping every citation attached to the fact it supports.",
+    body: "Fans out across the public web in parallel, researching the company and the person you're meeting, keeping every citation attached to the fact it supports.",
   },
   {
     n: "03",
     label: "Verify",
-    body: "Re-checks its own findings, digs deeper where confidence is low, and names what it couldn't confirm instead of guessing.",
+    body: "Re-checks its findings, confirms the contact really is who you think (never an unrelated namesake), and names what it couldn't confirm instead of guessing.",
   },
   {
     n: "04",
-    label: "Brief",
-    body: "Writes the structured briefing, then hands it over with a chat that answers follow-ups from the same evidence.",
+    label: "Deliver",
+    body: "Builds a dashboard: your objective answered, the cited research, the verified contact, and a pitch drawn from your company profile. Plus a chat that answers follow-ups from the same evidence.",
   },
 ];
 
@@ -225,7 +223,7 @@ function HowItWorks() {
               className="mt-5 font-display text-display-lg text-ink"
               style={{ fontVariationSettings: '"opsz" 144, "SOFT" 60' }}
             >
-              From a company name to a brief that's{" "}
+              From a company name to a meeting that's{" "}
               <em
                 className="italic text-accent"
                 style={{ fontVariationSettings: '"opsz" 144, "SOFT" 100, "WONK" 1' }}
@@ -234,9 +232,10 @@ function HowItWorks() {
               </em>
             </h2>
             <p className="mt-5 text-ink-soft leading-relaxed">
-              It plans the questions, researches them across the web, checks its
-              own work, and only then writes the report. Every step is
-              inspectable. Every citation is real.
+              It plans the questions, researches the company and the contact
+              across the web, checks its own work, then assembles the
+              dashboard: answer, cited research, verified contact, and a pitch.
+              Every step is inspectable. Every citation is real.
             </p>
           </div>
         </Reveal>
